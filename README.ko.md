@@ -3,7 +3,7 @@
 [🇺🇸 English Version](./README.md) | [🇰🇷 한국어 버전](./README.ko.md)
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-41BDF5.svg?style=for-the-badge)](https://github.com/hacs/integration)
-![version](https://img.shields.io/badge/version-v1.0.3-blue.svg?style=for-the-badge)
+![version](https://img.shields.io/badge/version-v1.0.4-blue.svg?style=for-the-badge)
 [![kofi](https://img.shields.io/badge/Ko--fi-Support%20Me-F16061?style=for-the-badge&logo=ko-fi)](https://ko-fi.com/plplaaa2)
 
 EFM ipTIME 공유기 연동을 위한 Home Assistant 통합 구성요소입니다. 3세대 모바일 IUX 및 최신 Flutter 베타 UI가 탑재된 AX 시리즈 등의 공유기를 지원하며, JSON-RPC (Web API) 통신 방식으로 동작하여 복잡한 SNMP 설정 없이 간편하게 실시간 상태를 확인하고 제어할 수 있습니다.
@@ -17,9 +17,10 @@ EFM ipTIME 공유기 연동을 위한 Home Assistant 통합 구성요소입니�
 * **유기적 수명 주기 관리**: 공유기 모델명 등 변하지 않는 정보는 최초 1회 수집 후 영구 캐싱하며, 포트/DNS/보안 제어/UPnP/재부팅 스케줄/WireGuard 상태 등은 5분~1시간 동안 메모리에 캐싱합니다.
 * **제어 즉시 반영 (Mutation Invalidation)**: 대시보드에서 스위치나 설정을 변경하면 즉시 관련 메모리 캐시를 만료시키고 공유기에 동기화하여 실시간 상태 피드백을 제공합니다.
 
-### 2. 인터넷(WAN) 단절, 공인 IP 변경 및 보안 설정 커스텀 경보 이벤트 (1.0.3 고도화)
+### 2. 인터넷(WAN) 단절, 공인 IP 변경, 보안 경보 및 펌웨어 업데이트 감지 (1.0.4 고도화)
 * **이중 통보 시스템**: 인터넷이 끊기거나 공인 IP 주소가 바뀌면 대시보드에 지속 알림(Persistent Notification)을 띄우는 것과 동시에, 자동화 구축을 위한 실시간 커스텀 이벤트(`iptime_manager_wan_alert`)를 방출합니다.
 * **보안 위협 실시간 탐지**: GeoIP 차단 해제, CSRF 방어 해제, DoS 보호 꺼짐, Wi-Fi BSS 강제 종료 등 치명적인 보안 설정 변동 감지 시 스마트폰 텔레그램이나 푸시 알림 등으로 즉시 연동할 수 있는 자동화 트리거용 커스텀 이벤트(`iptime_manager_security_alert`)를 발송합니다.
+* **공유기 펌웨어 업데이트 감지 (1.0.4 신설)**: 현재 설치된 공유기 펌웨어 버전과 원격 최신 버전을 비교하여 업데이트가 배포된 경우 대시보드에 클릭 가능한 공유기 설정 페이지 단축 링크를 동봉한 지속 알림을 자동으로 생성하며, 업데이트 완료 시 알림이 자동으로 해제됩니다.
 
 ### 3. Wi-Fi 무선 대역별 최적 채널 수동 제어 및 실시간 구동 채널 연동 (1.0.3 신설)
 * **대역별 Wi-Fi 채널 변경**: 2.4GHz, 5GHz, 6GHz 등 대역별로 공유기가 가동할 무선 채널을 대시보드 셀렉터(`select.iptime_wifi_channel_...`)로 직접 변경할 수 있습니다.

@@ -3,7 +3,7 @@
 [🇺🇸 English Version](./README.md) | [🇰🇷 한국어 버전](./README.ko.md)
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-41BDF5.svg?style=for-the-badge)](https://github.com/hacs/integration)
-![version](https://img.shields.io/badge/version-v1.0.3-blue.svg?style=for-the-badge)
+![version](https://img.shields.io/badge/version-v1.0.4-blue.svg?style=for-the-badge)
 [![kofi](https://img.shields.io/badge/Ko--fi-Support%20Me-F16061?style=for-the-badge&logo=ko-fi)](https://ko-fi.com/plplaaa2)
 
 Home Assistant integration for EFM ipTIME routers. Supporting models with the 3rd-generation responsive IUX (including AX-series) and the latest Flutter-based Beta UI, it operates entirely on a JSON-RPC (Web API) architecture for lightweight, real-time monitoring and system control without complex SNMP configuration.
@@ -17,9 +17,10 @@ Home Assistant integration for EFM ipTIME routers. Supporting models with the 3r
 * **Lifecycle Management**: Static parameters (e.g., model name) are queried once and permanently cached. Semi-static configurations (DNS, DoS, UPnP, Reboot schedules, WireGuard states) are cached for 5 minutes to 1 hour.
 * **Instant Mutation Invalidation**: Modifying a switch or selection immediately invalidates the corresponding memory cache, pushing changes to the router and forcing an immediate background update for instant feedback.
 
-### 2. WAN Status, Public IP & Security Custom Alert Events (1.0.3 Advanced)
+### 2. WAN Status, Public IP, Security Alerts & Firmware Update Detections (1.0.4 Advanced)
 * **Dual-Notification Pipeline**: Triggers a dashboard persistent notification and simultaneously fires real-time custom event bus payloads (`iptime_manager_wan_alert`) when WAN disconnection or public IP change occurs.
 * **Instant Security Threat Detections**: Fires a dedicated custom security event (`iptime_manager_security_alert`) immediately when high-risk changes occur (such as disabling GeoIP, turning off CSRF defense, shutting down DoS protectors, or disabling BSS Wi-Fi SSIDs), enabling instant Telegram/mobile push setups.
+* **Router Firmware Update Notifications (1.0.4 New)**: Compares the currently installed firmware version with the latest remote version. If an update is available, it automatically creates a dashboard persistent notification containing a clickable shortcut link directly to the router's settings page, and automatically dismisses the notification once the update is completed.
 
 ### 3. Wi-Fi Band-Level Optimal Channel Control & Real-time Active Channel (1.0.3 New)
 * **Optimal Channel Selectors**: Manages wireless active channels directly from the Home Assistant dashboard selectors (`select.iptime_wifi_channel_...`) for 2.4GHz, 5GHz, and 6GHz bands.
