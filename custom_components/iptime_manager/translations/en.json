@@ -32,6 +32,10 @@
       }
     },
     "notifications": {
+      "firmware_update": {
+        "title": "New Firmware Update Available",
+        "message": "A new firmware update is available for the ipTIME router.\n\n* **Current Version:** `{current_version}`\n* **Latest Version:** `{latest_version}`\n\n👉 You can perform the update on the **[Router Settings Page]({url})**."
+      },
       "wan_port_disconnect": {
         "title": "WAN External Port Disconnected",
         "message": "The WAN port external Internet cable of the ipTIME router ({url}) is unplugged or the modem connection is lost. Please check the physical cable status."

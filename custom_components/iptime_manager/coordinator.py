@@ -20,6 +20,7 @@ class IPTimeDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
         self.api = api
         self.entry = entry
         self._last_web_update = 0.0
+        self._firmware_update_notified = False
         
         scan_interval = entry.options.get(
             CONF_SCAN_INTERVAL,
@@ -116,6 +117,46 @@ class IPTimeDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
                     def get_security_detail(sec_key: str, field: str, default: str) -> str:
                         full_key = f"component.{DOMAIN}.config.notifications.security_{sec_key}_off.{field}"
                         return translations.get(full_key, default)
+
+                    # 케이스 0: 펌웨어 업데이트 감지 알림
+                    old_firmware = old_web.get("firmware", {}) if isinstance(old_web, dict) else {}
+                    new_firmware = new_web.get("firmware", {}) if isinstance(new_web, dict) else {}
+                    old_version = old_firmware.get("version") if isinstance(old_firmware, dict) else None
+                    new_version = new_firmware.get("version") if isinstance(new_firmware, dict) else None
+                    old_latest = old_firmware.get("latest_version") if isinstance(old_firmware, dict) else None
+                    new_latest = new_firmware.get("latest_version") if isinstance(new_firmware, dict) else None
+
+                    if new_version and new_latest and new_version not in ("Unknown", "") and new_latest not in ("Unknown", ""):
+                        if new_version != new_latest:
+                            if not getattr(self, "_firmware_update_notified", False) or old_latest != new_latest or old_version != new_version:
+                                _LOGGER.info(f"New firmware version available: {new_latest} (current: {new_version}) - creating notification")
+                                title = get_notify_string("firmware_update.title", "New Firmware Update Available")
+                                message = get_notify_string(
+                                    "firmware_update.message",
+                                    "A new firmware update is available for the ipTIME router ({url}).\n\n* **Current Version:** `{current_version}`\n* **Latest Version:** `{latest_version}`"
+                                ).format(url=self.entry.data.get(CONF_URL), current_version=new_version, latest_version=new_latest)
+
+                                await self.hass.services.async_call(
+                                    "persistent_notification",
+                                    "create",
+                                    {
+                                        "title": title,
+                                        "message": message,
+                                        "notification_id": "iptime_firmware_update"
+                                    }
+                                )
+                                self._firmware_update_notified = True
+                        else:
+                            if getattr(self, "_firmware_update_notified", False):
+                                _LOGGER.info("Firmware is up to date - dismissing firmware update notification")
+                                await self.hass.services.async_call(
+                                    "persistent_notification",
+                                    "dismiss",
+                                    {
+                                        "notification_id": "iptime_firmware_update"
+                                    }
+                                )
+                                self._firmware_update_notified = False
 
                     # 케이스 A: WAN 물리적 포트 링크 상태 단절/복구 감지
                     if old_linked and not new_linked:

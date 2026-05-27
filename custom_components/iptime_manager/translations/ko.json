@@ -32,6 +32,10 @@
       }
     },
     "notifications": {
+      "firmware_update": {
+        "title": "새로운 펌웨어 업데이트 발견",
+        "message": "ipTIME 공유기의 새로운 펌웨어 업데이트가 발견되었습니다.\n\n* **현재 버전:** `{current_version}`\n* **최신 버전:** `{latest_version}`\n\n👉 **[공유기 설정 페이지 바로가기]({url})**에서 업데이트를 진행할 수 있습니다."
+      },
       "wan_port_disconnect": {
         "title": "WAN 외부 포트 연결 끊김",
         "message": "ipTIME 공유기({url})의 WAN 포트 외부 인터넷 케이블이 분리되었거나 모뎀 연결이 끊겼습니다. 물리적 회선 상태를 확인해 주세요."
