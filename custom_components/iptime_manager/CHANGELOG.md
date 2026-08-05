@@ -5,12 +5,14 @@ ipTIME Manager의 공식 버전별 핵심 변경 사항 및 개선 내역입니�
 
 ---
 
-## EasyMesh diagnostic entities (v1.0.6, 2026-08-05)
+## EasyMesh and WireGuard diagnostics (v1.0.7, 2026-08-05)
 
 * Added EasyMesh activation and Agent count diagnostic entities.
 * Added per-Agent connection status entities and Controller metadata attributes.
 * Classified router identity/status sensors as diagnostic entities.
 * Classified Wi-Fi channel, auto-reboot day, night LED, and GeoIP policy selectors as configuration entities.
+* Added a diagnostic sensor for the current number of connected WireGuard peers.
+* Added device mode selection to Config Flow: auto, single router, EasyMesh Controller, or EasyMesh Agent.
 
 ## 🚀 [v1.0.5] - 2026-07-13 (ScannerEntity 감쇠 경고 수정 및 안정화 패치)
 

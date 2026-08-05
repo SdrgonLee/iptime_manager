@@ -3,7 +3,7 @@
 [🇺🇸 English Version](./README.en.md) | [🇰🇷 한국어 버전](./README.md)
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-41BDF5.svg?style=for-the-badge)](https://github.com/hacs/integration)
-![version](https://img.shields.io/badge/version-v1.0.6-blue.svg?style=for-the-badge)
+![version](https://img.shields.io/badge/version-v1.0.7-blue.svg?style=for-the-badge)
 [![kofi](https://img.shields.io/badge/Ko--fi-Support%20Me-F16061?style=for-the-badge&logo=ko-fi)](https://ko-fi.com/plplaaa2)
 
 EFM ipTIME 공유기 연동을 위한 Home Assistant 통합 구성요소입니다. 3세대 모바일 IUX 및 최신 Flutter 베타 UI가 탑재된 AX 시리즈 등의 공유기를 지원하며, JSON-RPC (Web API) 통신 방식으로 동작하여 복잡한 SNMP 설정 없이 간편하게 실시간 상태를 확인하고 제어할 수 있습니다.
