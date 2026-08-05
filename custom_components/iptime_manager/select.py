@@ -6,6 +6,7 @@ from typing import Any, Dict
 
 from homeassistant.components.select import SelectEntity
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -91,6 +92,7 @@ class IPTimeGeoIPSelect(CoordinatorEntity, SelectEntity):
         self._attr_unique_id = f"{entry.entry_id}_geoip_policy"
         self._attr_name = f"GeoIP Policy ({entry.data.get(CONF_URL)})"
         self._attr_icon = "mdi:earth"
+        self._attr_entity_category = EntityCategory.CONFIG
 
     @property
     def current_option(self) -> str | None:
@@ -160,6 +162,7 @@ class IPTimeNightLEDSelect(CoordinatorEntity, SelectEntity):
         self._attr_unique_id = f"{entry.entry_id}_night_led"
         self._attr_name = f"Night LED Mode ({entry.data.get(CONF_URL)})"
         self._attr_icon = "mdi:led-off"
+        self._attr_entity_category = EntityCategory.CONFIG
         self._last_valid_on = None
         self._last_valid_off = None
 
@@ -260,6 +263,7 @@ class IPTimeRebootDaySelect(CoordinatorEntity, SelectEntity):
         self._attr_unique_id = f"{entry.entry_id}_reboot_day"
         self._attr_name = f"Auto Reboot Day ({entry.data.get(CONF_URL)})"
         self._attr_icon = "mdi:calendar-week"
+        self._attr_entity_category = EntityCategory.CONFIG
         self._last_valid_hour = None
         self._last_valid_min = None
         self._last_valid_days = None
@@ -358,6 +362,7 @@ class IPTimeWifiChannelSelect(CoordinatorEntity, SelectEntity):
 
         self._attr_name = f"Wi-Fi Channel {band_label} ({entry.data.get(CONF_URL)})"
         self._attr_icon = "mdi:wifi-cog"
+        self._attr_entity_category = EntityCategory.CONFIG
         self._cached_options = ["auto"]
         self._last_options_update = 0.0
 

@@ -365,6 +365,14 @@ class IPTimeAPI:
             wireless_band_show = await self._async_service_json("wireless/band/show")
             wireless_bss = await self._async_service_json("wireless/bss/show")
             wireless_client = await self._async_service_json("wireless/client/show")
+
+            easymesh_info = await self._async_service_json("easymesh/info")
+            easymesh_agents = await self._async_service_json("easymesh/show/agent")
+            if easymesh_info.get("result") is not None or easymesh_agents.get("result") is not None:
+                self.web_result["easymesh"] = {
+                    "info": easymesh_info.get("result", {}),
+                    "agents": easymesh_agents.get("result", {}),
+                }
             
             band_data = wireless_band_show.get("result") or wireless_band.get("result") or []
             if wireless_info.get("result") or band_data or wireless_bss.get("result"):

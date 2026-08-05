@@ -9,7 +9,7 @@ from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorStateClass,
 )
-from homeassistant.const import UnitOfTime
+from homeassistant.const import EntityCategory, UnitOfTime
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.core import HomeAssistant
 from homeassistant.config_entries import ConfigEntry
@@ -78,6 +78,11 @@ SENSOR_TYPES: Dict[str, SensorEntityDescription] = {
         icon="mdi:shield-alert",
         state_class=SensorStateClass.MEASUREMENT,
     ),
+    "easymesh_agent_count": SensorEntityDescription(
+        key="easymesh_agent_count",
+        name="EasyMesh Agent Count",
+        icon="mdi:access-point-network",
+    ),
 }
 
 
@@ -107,6 +112,12 @@ def _web_sensor_value(web_data: Dict[str, Any], key: str) -> Any:
         return lan.get("mac")
     if key == "geoip_blocked_count":
         return web_data.get("geoip_blocked_pcount") if isinstance(web_data, dict) else None
+    if key == "easymesh_agent_count":
+        mesh = web_data.get("easymesh", {}) if isinstance(web_data, dict) else {}
+        agents = mesh.get("agents", {}) if isinstance(mesh, dict) else {}
+        if isinstance(agents, dict):
+            agents = agents.get("agent", [])
+        return len(agents) if isinstance(agents, list) else 0
     return None
 
 
@@ -130,6 +141,10 @@ class IPTimeSystemSensor(CoordinatorEntity, SensorEntity):
         self._entry = entry
         self._attr_name = f"{description.name} ({entry.data.get(CONF_URL)})"
         self._attr_unique_id = f"{entry.entry_id}_{description.key}"
+
+        # Summary: Place router identity and connection metadata in the device information section.
+        # Related files: coordinator.py, api.py, select.py.
+        self._attr_entity_category = EntityCategory.DIAGNOSTIC
         
         # MAC 관련 센서는 보안성과 대시보드 정화를 위해 초기 설치 시 기본 비활성화 처리
         if description.key in ("wan_mac", "lan_mac"):

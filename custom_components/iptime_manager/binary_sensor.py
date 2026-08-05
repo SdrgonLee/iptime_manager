@@ -9,6 +9,7 @@ from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
 )
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.config_entries import ConfigEntry
 
@@ -93,6 +94,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     data = coordinator.data if coordinator.data else {}
     entities = []
 
+    entities.append(IPTimeEasyMeshBinarySensor(coordinator, entry))
+
+    mesh_agents = _get_mesh_agents(data.get("web", {}).get("easymesh", {}))
+    for agent in mesh_agents:
+        entities.append(IPTimeEasyMeshAgentBinarySensor(coordinator, entry, agent))
+
     # Web API 기반 물리 유선 포트 센서만 생성 (무선 Wi-Fi는 스위치 엔티티로 통합 관리하므로 생성 제외)
     web_data = data.get("web", {})
     web_ports = web_data.get("ports", [])
@@ -105,6 +112,109 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
                 entities.append(IPTimeInterfaceBinarySensor(coordinator, entry, f"{port_type}:{port_num}", port_info=port_info))
 
     async_add_entities(entities)
+
+
+def _get_mesh_agents(mesh_data: Dict[str, Any]) -> list[Dict[str, Any]]:
+    """Normalize EasyMesh agent responses from different firmware versions."""
+    if not isinstance(mesh_data, dict):
+        return []
+    raw_agents = mesh_data.get("agents", mesh_data.get("agent", []))
+    if isinstance(raw_agents, dict):
+        raw_agents = raw_agents.get("agent", raw_agents.get("list", []))
+    if not isinstance(raw_agents, list):
+        return []
+    return [agent for agent in raw_agents if isinstance(agent, dict)]
+
+
+class IPTimeEasyMeshBinarySensor(CoordinatorEntity, BinarySensorEntity):
+    """Read-only EasyMesh activation status."""
+
+    def __init__(self, coordinator, entry) -> None:
+        super().__init__(coordinator)
+        self._entry = entry
+        self._attr_name = f"EasyMesh ({entry.data.get(CONF_URL)})"
+        self._attr_unique_id = f"{entry.entry_id}_easymesh"
+        self._attr_icon = "mdi:access-point-network"
+        self._attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    @property
+    def is_on(self) -> bool:
+        return bool(getattr(self.coordinator.api, "_ismesh", False))
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        web_data = self.coordinator.data.get("web", {}) if self.coordinator.data else {}
+        mesh = web_data.get("easymesh", {}) if isinstance(web_data, dict) else {}
+        info = mesh.get("info", {}) if isinstance(mesh, dict) else {}
+        if not isinstance(info, dict):
+            info = {}
+        return {
+            "role": info.get("role") or info.get("current_role") or "unknown",
+            "controller_mac": info.get("controller_mac"),
+        }
+
+
+class IPTimeEasyMeshAgentBinarySensor(CoordinatorEntity, BinarySensorEntity):
+    """Read-only status for one EasyMesh agent."""
+
+    def __init__(self, coordinator, entry, agent: Dict[str, Any]) -> None:
+        super().__init__(coordinator)
+        self._entry = entry
+        self._mac = str(agent.get("mac") or agent.get("al_mac") or "").strip().lower()
+        self._agent_key = _entity_key_part(self._mac or agent.get("product_name") or "agent")
+        self._attr_name = f"EasyMesh Agent {self._mac or self._agent_key} ({entry.data.get(CONF_URL)})"
+        self._attr_unique_id = f"{entry.entry_id}_easymesh_agent_{self._agent_key}"
+        self._attr_icon = "mdi:access-point"
+        self._attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def _current_agent(self) -> Dict[str, Any]:
+        data = self.coordinator.data or {}
+        mesh_data = data.get("web", {}).get("easymesh", {})
+        for agent in _get_mesh_agents(mesh_data):
+            mac = str(agent.get("mac") or agent.get("al_mac") or "").strip().lower()
+            if mac == self._mac:
+                return agent
+        return {}
+
+    @property
+    def is_on(self) -> bool:
+        agent = self._current_agent()
+        if not agent:
+            return False
+        return bool(agent.get("connected", agent.get("active", agent.get("online", True))))
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        agent = self._current_agent()
+        return {
+            "mac": agent.get("mac") or agent.get("al_mac") or self._mac,
+            "nickname": agent.get("nickname"),
+            "product_name": agent.get("product_name"),
+            "backhaul": agent.get("backhaul") or agent.get("connection"),
+            "controller_mac": agent.get("controller_mac"),
+        }
+
+    @property
+    def device_info(self) -> dict[str, Any]:
+        web_data = self.coordinator.data.get("web", {}) if self.coordinator.data else {}
+        model = web_data.get("model", "ipTIME Router")
+        return {
+            "identifiers": {(DOMAIN, self._entry.entry_id)},
+            "name": model,
+            "manufacturer": "EFM Networks",
+            "model": model,
+        }
+
+    @property
+    def device_info(self) -> dict[str, Any]:
+        web_data = self.coordinator.data.get("web", {}) if self.coordinator.data else {}
+        model = web_data.get("model", "ipTIME Router")
+        return {
+            "identifiers": {(DOMAIN, self._entry.entry_id)},
+            "name": model,
+            "manufacturer": "EFM Networks",
+            "model": model,
+        }
 
 
 class IPTimeInterfaceBinarySensor(CoordinatorEntity, BinarySensorEntity):
