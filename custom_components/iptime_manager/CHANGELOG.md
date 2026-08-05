@@ -5,6 +5,13 @@ ipTIME Manager의 공식 버전별 핵심 변경 사항 및 개선 내역입니�
 
 ---
 
+## EasyMesh diagnostic entities (v1.0.6, 2026-08-05)
+
+* Added EasyMesh activation and Agent count diagnostic entities.
+* Added per-Agent connection status entities and Controller metadata attributes.
+* Classified router identity/status sensors as diagnostic entities.
+* Classified Wi-Fi channel, auto-reboot day, night LED, and GeoIP policy selectors as configuration entities.
+
 ## 🚀 [v1.0.5] - 2026-07-13 (ScannerEntity 감쇠 경고 수정 및 안정화 패치)
 
 이 버전은 홈어시스턴트 Core 2027.6 버전에서 삭제될 예정인 `ScannerEntity` 감쇠 경고(deprecation warning)를 해결하기 위해 엔티티의 임포트 경로를 수정하여 시스템 안정성을 보강한 핫픽스 업데이트 버전입니다.
