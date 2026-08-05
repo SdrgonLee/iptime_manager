@@ -15,7 +15,8 @@
           "password": "Password",
           "consider_home": "Delay before considering not_home (seconds)",
           "rssi_limit": "EasyMesh presence RSSI threshold (dBm)",
-          "scan_interval": "Scan interval (seconds)"
+          "scan_interval": "Scan interval (seconds)",
+          "device_mode": "Device mode"
         }
       },
       "select_devices": {
@@ -140,7 +141,8 @@
           "targets": "Choose Presence target",
           "consider_home": "Delay before considering not_home (seconds)",
           "rssi_limit": "EasyMesh presence RSSI threshold (dBm)",
-          "scan_interval": "Scan interval (seconds)"
+          "scan_interval": "Scan interval (seconds)",
+          "device_mode": "Device mode"
         }
       },
       "name_new_devices": {

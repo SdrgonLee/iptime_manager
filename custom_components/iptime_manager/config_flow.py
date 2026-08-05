@@ -87,6 +87,12 @@ class IPTimeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 vol.Optional(CONF_CONSIDER_HOME, default=DEFAULT_CONSIDER_HOME): int,
                 vol.Optional(CONF_RSSI_LIMIT, default=DEFAULT_RSSI_LIMIT): int,
                 vol.Optional(CONF_SCAN_INTERVAL, default=DEFAULT_SCAN_INTERVAL): int,
+                vol.Required(CONF_DEVICE_MODE, default=DEFAULT_DEVICE_MODE): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=[DEVICE_MODE_AUTO, DEVICE_MODE_SINGLE, DEVICE_MODE_CONTROLLER, DEVICE_MODE_AGENT],
+                        mode=selector.SelectSelectorMode.DROPDOWN,
+                    )
+                ),
             })
         )
 
@@ -187,6 +193,7 @@ class IPTimeOptionsFlowHandler(config_entries.OptionsFlow):
                 CONF_TARGET: selected,
                 CONF_RSSI_LIMIT: user_input[CONF_RSSI_LIMIT],
                 CONF_SCAN_INTERVAL: user_input[CONF_SCAN_INTERVAL],
+                CONF_DEVICE_MODE: user_input[CONF_DEVICE_MODE],
             }
             
             if user_input.get("add_manual"):
@@ -236,6 +243,11 @@ class IPTimeOptionsFlowHandler(config_entries.OptionsFlow):
             self._config_entry.data.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)
         )
 
+        current_device_mode = self._config_entry.options.get(
+            CONF_DEVICE_MODE,
+            self._config_entry.data.get(CONF_DEVICE_MODE, DEFAULT_DEVICE_MODE)
+        )
+
         return self.async_show_form(
             step_id="init", 
             data_schema=vol.Schema({
@@ -243,6 +255,12 @@ class IPTimeOptionsFlowHandler(config_entries.OptionsFlow):
                 vol.Required(CONF_CONSIDER_HOME, default=current_timeout): int,
                 vol.Optional(CONF_RSSI_LIMIT, default=current_rssi_limit): int,
                 vol.Optional(CONF_SCAN_INTERVAL, default=current_scan_interval): int,
+                vol.Required(CONF_DEVICE_MODE, default=current_device_mode): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=[DEVICE_MODE_AUTO, DEVICE_MODE_SINGLE, DEVICE_MODE_CONTROLLER, DEVICE_MODE_AGENT],
+                        mode=selector.SelectSelectorMode.DROPDOWN,
+                    )
+                ),
                 vol.Optional("add_manual", default=False): bool,
             })
         )
