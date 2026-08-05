@@ -126,6 +126,36 @@ def _get_mesh_agents(mesh_data: Dict[str, Any]) -> list[Dict[str, Any]]:
     return [agent for agent in raw_agents if isinstance(agent, dict)]
 
 
+def _get_mesh_ssids(mesh_data: Dict[str, Any]) -> dict[str, str]:
+    """Extract only EasyMesh SSIDs and never expose credentials."""
+    result: dict[str, str] = {}
+
+    def walk(value: Any, band: str | None = None) -> None:
+        if isinstance(value, dict):
+            next_band = band
+            text = " ".join(str(key).lower() for key in value.keys())
+            if "2.4" in text or "2g" in text:
+                next_band = "2g"
+            elif "5g" in text or "5ghz" in text:
+                next_band = "5g"
+            elif "6g" in text or "6ghz" in text:
+                next_band = "6g"
+
+            ssid = value.get("ssid")
+            if next_band and isinstance(ssid, str) and ssid:
+                result.setdefault(f"ssid_{next_band}", ssid)
+            for key, child in value.items():
+                if str(key).lower() not in {"password", "passwd", "passphrase", "key", "psk"}:
+                    walk(child, next_band)
+        elif isinstance(value, list):
+            for child in value:
+                walk(child, band)
+
+    config = mesh_data.get("config", {}) if isinstance(mesh_data, dict) else {}
+    walk(config)
+    return result
+
+
 class IPTimeEasyMeshBinarySensor(CoordinatorEntity, BinarySensorEntity):
     """Read-only EasyMesh activation status."""
 
@@ -148,10 +178,12 @@ class IPTimeEasyMeshBinarySensor(CoordinatorEntity, BinarySensorEntity):
         info = mesh.get("info", {}) if isinstance(mesh, dict) else {}
         if not isinstance(info, dict):
             info = {}
-        return {
+        attributes = {
             "role": info.get("role") or info.get("current_role") or "unknown",
             "controller_mac": info.get("controller_mac"),
         }
+        attributes.update(_get_mesh_ssids(mesh))
+        return attributes
 
 
 class IPTimeEasyMeshAgentBinarySensor(CoordinatorEntity, BinarySensorEntity):
