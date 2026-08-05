@@ -83,6 +83,11 @@ SENSOR_TYPES: Dict[str, SensorEntityDescription] = {
         name="EasyMesh Agent Count",
         icon="mdi:access-point-network",
     ),
+    "wireguard_connected_peer_count": SensorEntityDescription(
+        key="wireguard_connected_peer_count",
+        name="WireGuard Connected Peer Count",
+        icon="mdi:account-network",
+    ),
 }
 
 
@@ -118,6 +123,9 @@ def _web_sensor_value(web_data: Dict[str, Any], key: str) -> Any:
         if isinstance(agents, dict):
             agents = agents.get("agent", [])
         return len(agents) if isinstance(agents, list) else 0
+    if key == "wireguard_connected_peer_count":
+        wg_server = web_data.get("wg_server", {}) if isinstance(web_data, dict) else {}
+        return wg_server.get("connected_peer_count") if isinstance(wg_server, dict) else None
     return None
 
 

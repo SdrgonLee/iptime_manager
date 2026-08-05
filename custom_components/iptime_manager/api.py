@@ -339,26 +339,39 @@ class IPTimeAPI:
                 if nat_config.get("result") is not None:
                     self.web_result["nat_config"] = nat_config["result"]
 
-                wg_server = await self._async_service_json("wg/server/show")
-                if wg_server.get("result") is not None:
-                    wg_data = wg_server["result"]
-                    if isinstance(wg_data, dict):
-                        self.web_result["wg_server"] = {
-                            "run": bool(wg_data.get("active", False)),
-                            "ip": wg_data.get("address", "10.0.21.1"),
-                            "subnet": "24",
-                            "port": int(wg_data.get("port", 53344)),
-                            "nat": bool(wg_data.get("nat", True))
-                        }
-                    else:
-                        self.web_result["wg_server"] = {}
-
                 self._last_caching_time = now
 
             # 4. 실시간 수집 데이터 (유선 포트, 무선 상태, LED, WAN 링크 상태는 매 주기마다 필수 조회)
             ports = await self._async_service_json("port/link/status")
             if ports.get("result"):
                 self.web_result["ports"] = ports["result"]
+
+            wg_server = await self._async_service_json("wg/server/show")
+            if wg_server.get("result") is not None:
+                wg_data = wg_server["result"]
+                if isinstance(wg_data, dict):
+                    peers = wg_data.get("peers", wg_data.get("peer", wg_data.get("clients", [])))
+                    if isinstance(peers, dict):
+                        peers = list(peers.values())
+                    connected_peers = 0
+                    if isinstance(peers, list):
+                        for peer in peers:
+                            if not isinstance(peer, dict):
+                                continue
+                            if "connected" in peer or "active" in peer:
+                                connected_peers += int(bool(peer.get("connected", peer.get("active"))))
+                            else:
+                                connected_peers += int(bool(peer.get("latest_handshake") or peer.get("last_handshake") or peer.get("handshake")))
+                    self.web_result["wg_server"] = {
+                        "run": bool(wg_data.get("active", False)),
+                        "ip": wg_data.get("address", "10.0.21.1"),
+                        "subnet": "24",
+                        "port": int(wg_data.get("port", 53344)),
+                        "nat": bool(wg_data.get("nat", True)),
+                        "connected_peer_count": connected_peers,
+                    }
+                else:
+                    self.web_result["wg_server"] = {}
 
             wireless_info = await self._async_service_json("wireless/info")
             wireless_band = await self._async_service_json("wireless/band/info")
