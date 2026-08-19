@@ -5,6 +5,12 @@ ipTIME Manager의 공식 버전별 핵심 변경 사항 및 개선 내역입니�
 
 ---
 
+## Per-band EasyMesh and guest Wi-Fi controls (v1.0.9, 2026-08-19)
+
+* Added switches for individually configured EasyMesh 2.4G/5G/6G main and guest SSIDs from `wifi_band`.
+* Matched the router UI's partial `wifi_band` write payload while keeping Wi-Fi credentials transient.
+* Displayed controller-wide `type=main` networks as `Main` instead of `unknown`.
+
 ## EasyMesh SSID controls and station attachment details (v1.0.8, 2026-08-19)
 
 * Added individual Home Assistant switches for Controller-managed EasyMesh SSIDs.

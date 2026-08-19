@@ -10,6 +10,11 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN, CONF_URL
 from .api import format_channel_string
+from .easymesh_wifi import (
+    easymesh_band_wifi_key,
+    easymesh_band_wifi_list,
+    easymesh_controller_wifi_list,
+)
 
 
 def _entity_key_part(value: Any) -> str:
@@ -33,24 +38,28 @@ def _web_wireless_bss_map(web_data: Dict[str, Any]) -> Dict[str, Dict[str, Any]]
 
 def _web_easymesh_wifi_list(web_data: Dict[str, Any]) -> List[Dict[str, Any]]:
     """Return Controller-managed EasyMesh networks without credentials."""
-    mesh = web_data.get("easymesh", {}) if isinstance(web_data, dict) else {}
-    config = mesh.get("config", {}) if isinstance(mesh, dict) else {}
-    raw_wifi = config.get("wifi_all", []) if isinstance(config, dict) else []
-    if not isinstance(raw_wifi, list):
-        return []
-    return [
-        item
-        for item in raw_wifi
-        if isinstance(item, dict) and item.get("type") is not None and item.get("ssid")
-    ]
+    return easymesh_controller_wifi_list(web_data)
 
 
 def _web_easymesh_wifi_map(web_data: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
     return {str(item.get("type")): item for item in _web_easymesh_wifi_list(web_data)}
 
 
+def _web_easymesh_band_wifi_list(web_data: Dict[str, Any]) -> List[Dict[str, Any]]:
+    return easymesh_band_wifi_list(web_data)
+
+
+def _web_easymesh_band_wifi_map(web_data: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    return {
+        easymesh_band_wifi_key(item.get("band"), item.get("type")): item
+        for item in _web_easymesh_band_wifi_list(web_data)
+    }
+
+
 def _web_easymesh_band_key(network_type: Any) -> str:
     value = str(network_type or "").lower()
+    if value in ("main", "all"):
+        return "main"
     for band in ("6g-2", "6g", "5g-2", "5g", "2g"):
         if band in value:
             return band
@@ -98,9 +107,12 @@ def _web_wireless_band_label(band: Any) -> str:
         "2g": "2.4G",
         "5g": "5G",
         "5g-2": "5G-2",
+        "5g2": "5G-2",
         "6g": "6G",
         "6g-2": "6G-2",
+        "6g2": "6G-2",
         "mlo": "MLO",
+        "main": "Main",
     }
     return mapping.get(band_key, str(band or "Unknown"))
 
@@ -157,6 +169,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         network_type = str(mesh_wifi.get("type"))
         if network_type:
             entities.append(IPTimeEasyMeshWifiSwitch(coordinator, entry, network_type))
+
+    # Individually configured 2.4G/5G/6G main and guest SSIDs live below
+    # easymesh/config.wifi_band rather than wifi_all.
+    for mesh_wifi in _web_easymesh_band_wifi_list(web_data):
+        band = str(mesh_wifi.get("band"))
+        network_type = str(mesh_wifi.get("type"))
+        if band and network_type:
+            entities.append(
+                IPTimeEasyMeshBandWifiSwitch(coordinator, entry, band, network_type)
+            )
 
     if coordinator.api._beta_ui:
         # 원격 관리 설정(Access List) 지원 모델인 경우에만 생성
@@ -335,6 +357,83 @@ class IPTimeEasyMeshWifiSwitch(CoordinatorEntity, SwitchEntity):
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         if await self.coordinator.api.async_set_web_easymesh_wifi_enable(self._network_type, False):
+            await self.coordinator.async_request_refresh()
+
+    @property
+    def device_info(self) -> dict[str, Any]:
+        web_data = self.coordinator.data.get("web", {}) if self.coordinator.data else {}
+        model = web_data.get("model", "ipTIME Router")
+        return {
+            "identifiers": {(DOMAIN, self._entry.entry_id)},
+            "name": model,
+            "manufacturer": "EFM Networks",
+            "model": model,
+        }
+
+
+class IPTimeEasyMeshBandWifiSwitch(CoordinatorEntity, SwitchEntity):
+    """Individually configured EasyMesh band SSID on/off switch."""
+
+    def __init__(self, coordinator, entry, band: str, network_type: str) -> None:
+        super().__init__(coordinator)
+        self._entry = entry
+        self._band = band
+        self._network_type = network_type
+        self._network_key = easymesh_band_wifi_key(band, network_type)
+        self._attr_unique_id = (
+            f"{entry.entry_id}_easymesh_band_wifi_"
+            f"{_entity_key_part(band)}_{_entity_key_part(network_type)}"
+        )
+        self._attr_icon = "mdi:wifi-marker"
+
+        wifi_info = self._current_info()
+        ssid = wifi_info.get("ssid") or self._network_key
+        band_label = _web_wireless_band_label(self._band)
+        guest_label = " Guest" if "guest" in self._network_type.lower() else ""
+        self._attr_name = (
+            f"EasyMesh WiFi {band_label}{guest_label} - {ssid} "
+            f"({entry.data.get(CONF_URL)})"
+        )
+
+    def _current_info(self) -> Dict[str, Any]:
+        web_data = self.coordinator.data.get("web", {}) if self.coordinator.data else {}
+        return _web_easymesh_band_wifi_map(web_data).get(self._network_key, {})
+
+    @property
+    def is_on(self) -> bool:
+        wifi_info = self._current_info()
+        band_enabled = wifi_info.get("band_enable")
+        return bool(wifi_info.get("enable")) and band_enabled is not False
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        wifi_info = self._current_info()
+        return {
+            "network_type": self._network_type,
+            "ssid": wifi_info.get("ssid"),
+            "band": _web_wireless_band_label(self._band),
+            "band_enabled": wifi_info.get("band_enable"),
+            "separated": wifi_info.get("separated"),
+            "guest": "guest" in self._network_type.lower(),
+            "hide": wifi_info.get("hide"),
+            "access": wifi_info.get("access"),
+            "security": _web_wireless_security_label(wifi_info.get("authenc")),
+        }
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        if await self.coordinator.api.async_set_web_easymesh_band_wifi_enable(
+            self._band,
+            self._network_type,
+            True,
+        ):
+            await self.coordinator.async_request_refresh()
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        if await self.coordinator.api.async_set_web_easymesh_band_wifi_enable(
+            self._band,
+            self._network_type,
+            False,
+        ):
             await self.coordinator.async_request_refresh()
 
     @property
