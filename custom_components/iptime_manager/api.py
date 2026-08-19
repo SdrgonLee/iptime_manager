@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional, Final
 from json import loads
 from datetime import timedelta
 from .const import *
+from .easymesh_wifi import build_easymesh_band_enable_payload
 
 # 요약: ipTIME 공유기와의 통신(Web CGI) 담당 API 클래스
 # 연결될 파일: const.py, coordinator.py
@@ -505,6 +506,45 @@ class IPTimeAPI:
         if response.get("error"):
             error = _sanitize_easymesh_config(response.get("error"))
             _LOGGER.warning("EasyMesh SSID 제어 실패: %s", error)
+            return False
+
+        self._last_caching_time = 0.0
+        return bool(response)
+
+    async def async_set_web_easymesh_band_wifi_enable(
+        self,
+        band: str,
+        network_type: str,
+        enable: bool,
+    ) -> bool:
+        """Toggle one individually configured EasyMesh band SSID."""
+        if not self._beta_ui:
+            return False
+
+        current_response = await self._async_service_json("easymesh/config")
+        current = current_response.get("result")
+        if not isinstance(current, dict):
+            _LOGGER.warning("EasyMesh band SSID control failed: current config is unavailable")
+            return False
+
+        params = build_easymesh_band_enable_payload(
+            current,
+            band,
+            network_type,
+            enable,
+        )
+        if params is None:
+            _LOGGER.warning(
+                "EasyMesh band SSID control failed: network %s:%s was not found",
+                band,
+                network_type,
+            )
+            return False
+
+        response = await self._async_service_json("easymesh/config", params)
+        if response.get("error"):
+            error = _sanitize_easymesh_config(response.get("error"))
+            _LOGGER.warning("EasyMesh band SSID control failed: %s", error)
             return False
 
         self._last_caching_time = 0.0
