@@ -1,15 +1,15 @@
 {
     "domain": "iptime_manager",
     "name": "ipTIME Manager",
-    "documentation": "https://github.com/plplaaa2/iptime_manager",
-    "issue_tracker": "https://github.com/plplaaa2/iptime_manager/issues",
+    "documentation": "https://github.com/SdrgonLee/iptime_manager",
+    "issue_tracker": "https://github.com/SdrgonLee/iptime_manager/issues",
     "codeowners": [
-        "@plplaaa2"
+        "@SdrgonLee"
     ],
     "requirements": [],
     "dependencies": [],
     "iot_class": "local_polling",
-    "version": "1.0.7",
+    "version": "1.0.8",
     "config_flow": true,
     "ssdp": [
         {

@@ -16,6 +16,21 @@ from .const import *
 
 _LOGGER = logging.getLogger(__name__)
 
+_EASYMESH_SECRET_KEYS = frozenset({"password", "passwd", "passphrase", "key", "psk"})
+
+
+def _sanitize_easymesh_config(value: Any) -> Any:
+    """Return EasyMesh data without Wi-Fi credentials."""
+    if isinstance(value, dict):
+        return {
+            key: _sanitize_easymesh_config(child)
+            for key, child in value.items()
+            if str(key).lower() not in _EASYMESH_SECRET_KEYS
+        }
+    if isinstance(value, list):
+        return [_sanitize_easymesh_config(child) for child in value]
+    return value
+
 
 def _normalize_model_name(raw_model: Any) -> str:
     text = str(raw_model or "").strip()
@@ -389,7 +404,8 @@ class IPTimeAPI:
             ):
                 self.web_result["easymesh"] = {
                     "info": easymesh_info.get("result", {}),
-                    "config": easymesh_config.get("result", {}),
+                    # Coordinator/entity state must never retain Wi-Fi credentials.
+                    "config": _sanitize_easymesh_config(easymesh_config.get("result", {})),
                     "agents": easymesh_agents.get("result", {}),
                 }
             
@@ -434,6 +450,64 @@ class IPTimeAPI:
             _LOGGER.warning(f"무선 BSS 제어 실패: {response.get('error')}")
             return False
         self._last_caching_time = 0.0 # 캐시 강제 만료
+        return bool(response)
+
+    async def async_set_web_easymesh_wifi_enable(self, network_type: str, enable: bool) -> bool:
+        """Toggle one Controller-managed EasyMesh SSID.
+
+        ipTIME's Flutter UI reads the complete EasyMesh configuration and sends
+        the full ``wifi_all`` array back when one SSID changes. Fetching it here
+        keeps credentials transient: passwords are forwarded to the router but
+        are never stored in coordinator/entity state or written to logs.
+        """
+        if not self._beta_ui:
+            return False
+
+        current_response = await self._async_service_json("easymesh/config")
+        current = current_response.get("result")
+        if not isinstance(current, dict):
+            _LOGGER.warning("EasyMesh SSID 제어 실패: 현재 설정을 불러올 수 없습니다")
+            return False
+
+        raw_wifi = current.get("wifi_all")
+        if not isinstance(raw_wifi, list):
+            _LOGGER.warning("EasyMesh SSID 제어 실패: wifi_all 목록이 없습니다")
+            return False
+
+        wifi_payload: List[Dict[str, Any]] = []
+        target_found = False
+        supported_fields = ("type", "enable", "hide", "access", "authenc", "ssid", "password")
+
+        for raw_item in raw_wifi:
+            if not isinstance(raw_item, dict):
+                continue
+            item = {field: raw_item.get(field) for field in supported_fields if field in raw_item}
+            if str(raw_item.get("type")) == str(network_type):
+                item["enable"] = bool(enable)
+                target_found = True
+            wifi_payload.append(item)
+
+        if not target_found:
+            _LOGGER.warning("EasyMesh SSID 제어 실패: 네트워크 유형 %s을 찾을 수 없습니다", network_type)
+            return False
+
+        global_config = current.get("global")
+        global_enable = (
+            bool(global_config.get("enable"))
+            if isinstance(global_config, dict) and global_config.get("enable") is not None
+            else True
+        )
+        params = {
+            "global": {"enable": global_enable},
+            "wifi_all": wifi_payload,
+        }
+        response = await self._async_service_json("easymesh/config", params)
+        if response.get("error"):
+            error = _sanitize_easymesh_config(response.get("error"))
+            _LOGGER.warning("EasyMesh SSID 제어 실패: %s", error)
+            return False
+
+        self._last_caching_time = 0.0
         return bool(response)
 
     async def async_set_web_wireless_band_enable(self, band: str, enable: bool, separated: Any = None, bss: Any = None) -> bool:
@@ -845,6 +919,34 @@ class IPTimeAPI:
             _LOGGER.debug(f"Failed to parse EasyMesh topology JSON: {err}")
             return res
 
+        # The topology response links each station to a Controller/Agent via
+        # ``agent_mac``. Build a small, non-sensitive lookup for entity attrs.
+        mesh_nodes: Dict[str, Dict[str, Any]] = {}
+
+        def add_mesh_nodes(raw_nodes: Any, role: str) -> None:
+            if isinstance(raw_nodes, dict):
+                raw_nodes = [raw_nodes]
+            if not isinstance(raw_nodes, list):
+                return
+            for node in raw_nodes:
+                if not isinstance(node, dict):
+                    continue
+                raw_mac = str(node.get("mac") or "").strip()
+                normalized_mac = raw_mac.replace(":", "").replace("-", "").lower()
+                if not normalized_mac:
+                    continue
+                product_name = node.get("product_name") or node.get("model")
+                mesh_nodes[normalized_mac] = {
+                    "name": node.get("nickname") or product_name or raw_mac,
+                    "mac": raw_mac,
+                    "model": product_name,
+                    "role": role,
+                    "ip": node.get("ip"),
+                }
+
+        add_mesh_nodes(data.get("controller", []), "controller")
+        add_mesh_nodes(data.get("agent", []), "agent")
+
         for s in stations:
             try:
                 if not isinstance(s, dict):
@@ -882,13 +984,25 @@ class IPTimeAPI:
                 # RSSI 한계값(rssi_limit)과 대조하여 재실 여부 판정
                 # 만약 사용자가 RSSI 차단을 끄고 싶다면 설정에서 -100 등의 값을 입력하면 됩니다.
                 state = "home" if rssi_val is None or rssi_int >= rssi_limit else "not_home"
+
+                raw_agent_mac = str(s.get("agent_mac") or "").strip()
+                agent_key = raw_agent_mac.replace(":", "").replace("-", "").lower()
+                mesh_node = mesh_nodes.get(agent_key, {})
                 
                 res[mac] = {
                     "ip": s.get("ip", "N/A"),
                     "band": s.get("mode", "Unknown"),
                     "stay_time": stay_time_str,
                     "rssi": rssi_int if rssi_val is not None else None,
-                    "state": state
+                    "state": state,
+                    "connected_to": mesh_node.get("name") or raw_agent_mac or None,
+                    "connected_to_mac": mesh_node.get("mac") or raw_agent_mac or None,
+                    "connected_to_model": mesh_node.get("model"),
+                    "connected_to_role": mesh_node.get("role"),
+                    "connected_to_ip": mesh_node.get("ip"),
+                    "mesh_connection": connection or None,
+                    "mesh_channel": s.get("channel"),
+                    "mesh_interface": s.get("if_type"),
                 }
             except Exception as err:
                 _LOGGER.debug(f"Error parsing EasyMesh station {s.get('mac', 'unknown')}: {err}")

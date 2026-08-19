@@ -5,6 +5,12 @@ ipTIME Manager의 공식 버전별 핵심 변경 사항 및 개선 내역입니�
 
 ---
 
+## EasyMesh SSID controls and station attachment details (v1.0.8, 2026-08-19)
+
+* Added individual Home Assistant switches for Controller-managed EasyMesh SSIDs.
+* Matched the router UI's `easymesh/config` write format while keeping Wi-Fi credentials out of coordinator and entity state.
+* Added the connected EasyMesh Controller/Agent, role, model, band, channel, and interface to each tracked device's attributes.
+
 ## EasyMesh and WireGuard diagnostics (v1.0.7, 2026-08-05)
 
 * Added EasyMesh SSID read-only attributes while excluding passwords and keys.
