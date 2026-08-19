@@ -3,7 +3,7 @@
 [🇺🇸 English Version](./README.en.md) | [🇰🇷 한국어 버전](./README.md)
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-41BDF5.svg?style=for-the-badge)](https://github.com/hacs/integration)
-![version](https://img.shields.io/badge/version-v1.0.7-blue.svg?style=for-the-badge)
+![version](https://img.shields.io/badge/version-v1.0.8-blue.svg?style=for-the-badge)
 [![kofi](https://img.shields.io/badge/Ko--fi-Support%20Me-F16061?style=for-the-badge&logo=ko-fi)](https://ko-fi.com/plplaaa2)
 
 Home Assistant integration for EFM ipTIME routers. Supporting models with the 3rd-generation responsive IUX (including AX-series) and the latest Flutter-based Beta UI, it operates entirely on a JSON-RPC (Web API) architecture for lightweight, real-time monitoring and system control without complex SNMP configuration.
@@ -93,13 +93,13 @@ To maintain smart home connectivity, actions that trigger a physical hardware-le
 
 ### 1. Automatic Installation (Recommended)
 
-[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=plplaaa2&repository=iptime_manager)
+[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=SdrgonLee&repository=iptime_manager)
 
 Click the button above to add this repository directly inside HACS, install **ipTIME Manager**, and restart Home Assistant.
 
 ### 2. Manual Installation
 1. Go to **HACS** -> **Integrations** -> click three dots in top-right -> select **Custom repositories**
-2. Paste `https://github.com/plplaaa2/iptime_manager` and select **Integration** category
+2. Paste `https://github.com/SdrgonLee/iptime_manager` and select **Integration** category
 3. Install **ipTIME Manager** and restart Home Assistant
 
 ### 3. Integration Setup (Config Flow) & Configuration Tuning (Options Flow)

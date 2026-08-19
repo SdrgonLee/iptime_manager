@@ -121,6 +121,14 @@ class IPTimeDeviceEntity(CoordinatorEntity, ScannerEntity):
             "band": device.get("band"),
             "stay_time": device.get("stay_time"),
             "rssi": device.get("rssi"),
+            "connected_to": device.get("connected_to"),
+            "connected_to_mac": device.get("connected_to_mac"),
+            "connected_to_model": device.get("connected_to_model"),
+            "connected_to_role": device.get("connected_to_role"),
+            "connected_to_ip": device.get("connected_to_ip"),
+            "mesh_connection": device.get("mesh_connection"),
+            "mesh_channel": device.get("mesh_channel"),
+            "mesh_interface": device.get("mesh_interface"),
             "last_seen": self._last_seen.isoformat() if self._last_seen else None
         }
 

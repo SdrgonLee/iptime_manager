@@ -3,7 +3,7 @@
 [🇺🇸 English Version](./README.en.md) | [🇰🇷 한국어 버전](./README.md)
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-41BDF5.svg?style=for-the-badge)](https://github.com/hacs/integration)
-![version](https://img.shields.io/badge/version-v1.0.7-blue.svg?style=for-the-badge)
+![version](https://img.shields.io/badge/version-v1.0.8-blue.svg?style=for-the-badge)
 [![kofi](https://img.shields.io/badge/Ko--fi-Support%20Me-F16061?style=for-the-badge&logo=ko-fi)](https://ko-fi.com/plplaaa2)
 
 EFM ipTIME 공유기 연동을 위한 Home Assistant 통합 구성요소입니다. 3세대 모바일 IUX 및 최신 Flutter 베타 UI가 탑재된 AX 시리즈 등의 공유기를 지원하며, JSON-RPC (Web API) 통신 방식으로 동작하여 복잡한 SNMP 설정 없이 간편하게 실시간 상태를 확인하고 제어할 수 있습니다.
@@ -94,13 +94,13 @@ EFM ipTIME 공유기 연동을 위한 Home Assistant 통합 구성요소입니�
 
 ### 1. 자동 설치 (추천)
 
-[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=plplaaa2&repository=iptime_manager)
+[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=SdrgonLee&repository=iptime_manager)
 
 위 버튼을 눌러 HACS 저장소 추가 후 **ipTIME Manager** 설치 후 Home Assistant를 재시작해 주세요.
 
 ### 2. 수동 설치
 1. HACS -> Integrations -> 우측 상단 메뉴 -> **Custom repositories** 선택
-2. `https://github.com/plplaaa2/iptime_manager` 추가 (Category: Integration)
+2. `https://github.com/SdrgonLee/iptime_manager` 추가 (Category: Integration)
 3. **ipTIME Manager** 설치 후 Home Assistant 재시작
 
 ### 3. 통합 구성요소 설정 (Config Flow) 및 옵션 변경 (Options Flow)
