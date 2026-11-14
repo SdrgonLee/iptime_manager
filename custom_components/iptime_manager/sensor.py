@@ -10,7 +10,7 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.const import EntityCategory, UnitOfTime
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from .coordinator import IPTimeChangedEntity
 from homeassistant.core import HomeAssistant
 from homeassistant.config_entries import ConfigEntry
 
@@ -30,11 +30,6 @@ SENSOR_TYPES: Dict[str, SensorEntityDescription] = {
         device_class=SensorDeviceClass.DURATION,
         state_class=SensorStateClass.TOTAL_INCREASING,
     ),
-    "model": SensorEntityDescription(
-        key="model",
-        name="Model",
-        icon="mdi:router-wireless",
-    ),
     "version": SensorEntityDescription(
         key="version",
         name="Firmware Version",
@@ -45,87 +40,37 @@ SENSOR_TYPES: Dict[str, SensorEntityDescription] = {
         name="Latest Firmware Version",
         icon="mdi:update",
     ),
-    "primary_dns": SensorEntityDescription(
-        key="primary_dns",
-        name="Primary DNS",
-        icon="mdi:dns",
-    ),
-    "secondary_dns": SensorEntityDescription(
-        key="secondary_dns",
-        name="Secondary DNS",
-        icon="mdi:dns-outline",
-    ),
-    "wan_mac": SensorEntityDescription(
-        key="wan_mac",
-        name="WAN MAC",
-        icon="mdi:network",
-    ),
     "wan_ip": SensorEntityDescription(
         key="wan_ip",
         name="WAN IP Address",
         icon="mdi:ip-network",
-    ),
-    "lan_mac": SensorEntityDescription(
-        key="lan_mac",
-        name="LAN MAC",
-        icon="mdi:lan",
-    ),
-    # 요약: GeoIP 차단 누적 수를 웹 데이터 기본 센서로 노출한다.
-    # 연결 파일: api.py, coordinator.py, select.py
-    "geoip_blocked_count": SensorEntityDescription(
-        key="geoip_blocked_count",
-        name="GeoIP Blocked Count",
-        icon="mdi:shield-alert",
-        state_class=SensorStateClass.MEASUREMENT,
     ),
     "easymesh_agent_count": SensorEntityDescription(
         key="easymesh_agent_count",
         name="EasyMesh Agent Count",
         icon="mdi:access-point-network",
     ),
-    "wireguard_connected_peer_count": SensorEntityDescription(
-        key="wireguard_connected_peer_count",
-        name="WireGuard Connected Peer Count",
-        icon="mdi:account-network",
-    ),
 }
 
 
 def _web_sensor_value(web_data: Dict[str, Any], key: str) -> Any:
     firmware = web_data.get("firmware", {}) if isinstance(web_data, dict) else {}
-    lan = web_data.get("lan", {}) if isinstance(web_data, dict) else {}
     wan = web_data.get("wan", {}) if isinstance(web_data, dict) else {}
-    dns = web_data.get("dns", []) if isinstance(web_data, dict) else []
 
     if key == "uptime":
         return web_data.get("uptime") if isinstance(web_data, dict) else None
-    if key == "model":
-        return web_data.get("model", "ipTIME Router") if isinstance(web_data, dict) else "ipTIME Router"
     if key == "version":
         return firmware.get("version")
     if key == "latest_version":
         return firmware.get("latest_version")
-    if key == "primary_dns":
-        return dns[0] if isinstance(dns, list) and len(dns) > 0 else None
-    if key == "secondary_dns":
-        return dns[1] if isinstance(dns, list) and len(dns) > 1 else None
-    if key == "wan_mac":
-        return wan.get("mac")
     if key == "wan_ip":
         return wan.get("ip")
-    if key == "lan_mac":
-        return lan.get("mac")
-    if key == "geoip_blocked_count":
-        return web_data.get("geoip_blocked_pcount") if isinstance(web_data, dict) else None
     if key == "easymesh_agent_count":
         mesh = web_data.get("easymesh", {}) if isinstance(web_data, dict) else {}
         agents = mesh.get("agents", {}) if isinstance(mesh, dict) else {}
         if isinstance(agents, dict):
             agents = agents.get("agent", [])
         return len(agents) if isinstance(agents, list) else 0
-    if key == "wireguard_connected_peer_count":
-        wg_server = web_data.get("wg_server", {}) if isinstance(web_data, dict) else {}
-        return wg_server.get("connected_peer_count") if isinstance(wg_server, dict) else None
     return None
 
 
@@ -140,7 +85,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     async_add_entities(entities)
 
 
-class IPTimeSystemSensor(CoordinatorEntity, SensorEntity):
+class IPTimeSystemSensor(IPTimeChangedEntity, SensorEntity):
     """공유기 시스템 정보 센서 (Uptime, Model, Version)."""
 
     def __init__(self, coordinator, entry, description: SensorEntityDescription) -> None:
@@ -154,10 +99,6 @@ class IPTimeSystemSensor(CoordinatorEntity, SensorEntity):
         # Related files: coordinator.py, api.py, select.py.
         self._attr_entity_category = EntityCategory.DIAGNOSTIC
         
-        # MAC 관련 센서는 보안성과 대시보드 정화를 위해 초기 설치 시 기본 비활성화 처리
-        if description.key in ("wan_mac", "lan_mac"):
-            self._attr_entity_registry_enabled_default = False
-
     @property
     def native_value(self) -> Any:
         """통합 데이터에서 시스템 정보 추출 (Web 전용)."""

@@ -61,14 +61,6 @@
         "title": "GeoIP Feature Disabled Warning",
         "message": "The GeoIP foreign IP blocking security feature of the ipTIME router ({url}) is turned off. If this is unintended, your network might be exposed to random attacks from abroad. Please verify your settings."
       },
-      "portforward_on": {
-        "title": "Port Forwarding Enabled",
-        "message": "The Port Forwarding feature of the ipTIME router ({url}) has been turned On. Specific local ports will be exposed to the external Internet according to your active forwarding rules."
-      },
-      "portforward_off": {
-        "title": "Port Forwarding Disabled",
-        "message": "The Port Forwarding feature of the ipTIME router ({url}) has been turned Off. All external port open rules are temporarily blocked."
-      },
       "wifi_off": {
         "title": "Wi-Fi Network Off Warning ({ssid})",
         "message": "The wireless network **{ssid}** ({band} band) of the ipTIME router ({url}) has been disabled. All wireless IoT smart devices mapped to this band may lose connection."

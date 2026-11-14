@@ -1,15 +1,15 @@
 from __future__ import annotations
 
 import logging
+from time import monotonic
 from typing import Any
 
 from homeassistant.components.device_tracker import ScannerEntity, SourceType
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
-from homeassistant.util import dt as dt_util
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.config_entries import ConfigEntry
 
 from .const import DOMAIN, CONF_CONSIDER_HOME, DEFAULT_CONSIDER_HOME, CONF_TARGET
+from .coordinator import IPTimeChangedEntity
 
 # 요약: ipTIME 공유기 연결 기기 목록을 바탕으로 재실 상태를 관리하는 플랫폼
 # 연결될 파일: const.py, coordinator.py, __init__.py
@@ -20,7 +20,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     """기기 추적기 설정. (연결될 파일: const.py, coordinator.py)"""
     from homeassistant.helpers import entity_registry as er
 
-    coordinator = hass.data[DOMAIN][entry.entry_id]
+    coordinator = hass.data[DOMAIN][entry.entry_id].tracker
     device_map = entry.data.get("devices", {})
     
     # 옵션에 추적할 기기 리스트(targets)가 있으면 거기서만 필터링하고, 없으면 전체 기기 로드
@@ -50,7 +50,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     ]
     async_add_entities(entities)
 
-class IPTimeDeviceEntity(CoordinatorEntity, ScannerEntity):
+class IPTimeDeviceEntity(IPTimeChangedEntity, ScannerEntity):
     """ipTIME 연결 기기 엔티티."""
 
     def __init__(self, coordinator, entry, mac: str, name: str) -> None:
@@ -61,42 +61,35 @@ class IPTimeDeviceEntity(CoordinatorEntity, ScannerEntity):
         # 고유 ID는 기존 호환성을 위해 원본 MAC 사용
         self._attr_unique_id = f"{entry.entry_id}_{mac}"
         self._entry = entry
-        self._last_seen: Any = None
+        self._last_seen: float | None = None
+        self._consider_home = entry.options.get(
+            CONF_CONSIDER_HOME, entry.data.get(CONF_CONSIDER_HOME, DEFAULT_CONSIDER_HOME)
+        )
+        self._connected = False
+        self._update_presence()
         _LOGGER.debug("[%s] Entity initialization completed (matching MAC: %s)", name, self._mac)
 
     @property
     def is_connected(self) -> bool:
-        """연결 상태 확인."""
-        if not self.coordinator.data:
-            return False
-            
-        # 코디네이터 통합 데이터에서 기기 목록 추출
-        devices = self.coordinator.data.get("devices", {})
-        device = devices.get(self._mac)
-        
-        # 만약 못 찾았다면, 데이터 내의 키들을 다시 한 번 표준화해서 비교 시도
-        if not device:
-            for k, v in devices.items():
-                if isinstance(v, dict) and k.replace(":", "").replace("-", "").lower() == self._mac:
-                    device = v
-                    break
-        
-        is_now_home = device is not None and device.get("state") == "home"
-        _LOGGER.debug(f"ipTIME tracker [{self._attr_name}] matching attempt (MAC: {self._mac}): {'success' if device else 'failed'}")
-        
-        if is_now_home:
-            self._last_seen = dt_util.utcnow()
-            return True
-            
-        if self._last_seen is None:
-            return False
-            
-        timeout = self._entry.options.get(
-            CONF_CONSIDER_HOME, 
-            self._entry.data.get(CONF_CONSIDER_HOME, DEFAULT_CONSIDER_HOME)
+        return self._connected
+
+    def _update_presence(self) -> None:
+        if not self.coordinator.last_update_success:
+            return
+        now = monotonic()
+        device = (self.coordinator.data or {}).get(self._mac, {})
+        if device.get("state") == "home":
+            self._last_seen = now
+            self._connected = True
+            return
+        self._connected = (
+            self._last_seen is not None and now - self._last_seen < self._consider_home
         )
-        
-        return (dt_util.utcnow() - self._last_seen).total_seconds() < timeout
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        self._update_presence()
+        super()._handle_coordinator_update()
 
     @property
     def source_type(self) -> SourceType:
@@ -109,18 +102,10 @@ class IPTimeDeviceEntity(CoordinatorEntity, ScannerEntity):
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         """추가 속성 제공."""
-        # 통합 데이터에서 해당 MAC의 정보 추출
-        devices = self.coordinator.data.get("devices", {}) if self.coordinator.data else {}
-        device = devices.get(self._mac)
-        
-        if not isinstance(device, dict):
-            device = {}
-            
+        device = (self.coordinator.data or {}).get(self._mac, {})
         return {
             "ip": device.get("ip"),
             "band": device.get("band"),
-            "stay_time": device.get("stay_time"),
-            "rssi": device.get("rssi"),
             "connected_to": device.get("connected_to"),
             "connected_to_mac": device.get("connected_to_mac"),
             "connected_to_model": device.get("connected_to_model"),
@@ -129,7 +114,6 @@ class IPTimeDeviceEntity(CoordinatorEntity, ScannerEntity):
             "mesh_connection": device.get("mesh_connection"),
             "mesh_channel": device.get("mesh_channel"),
             "mesh_interface": device.get("mesh_interface"),
-            "last_seen": self._last_seen.isoformat() if self._last_seen else None
         }
 
     @property

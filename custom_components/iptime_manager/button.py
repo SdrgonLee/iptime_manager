@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from homeassistant.components.button import ButtonEntity, ButtonEntityDescription
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from .coordinator import IPTimeChangedEntity
 from homeassistant.core import HomeAssistant
 from homeassistant.config_entries import ConfigEntry
 
@@ -21,7 +21,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     if entities:
         async_add_entities(entities)
 
-class IPTimeRebootButton(CoordinatorEntity, ButtonEntity):
+class IPTimeRebootButton(IPTimeChangedEntity, ButtonEntity):
     """공유기 재부팅 버튼."""
 
     def __init__(self, coordinator, entry) -> None:

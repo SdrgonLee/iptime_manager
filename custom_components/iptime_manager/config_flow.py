@@ -86,7 +86,7 @@ class IPTimeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 vol.Required(CONF_PASSWORD): selector.TextSelector(selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)),
                 vol.Optional(CONF_CONSIDER_HOME, default=DEFAULT_CONSIDER_HOME): int,
                 vol.Optional(CONF_RSSI_LIMIT, default=DEFAULT_RSSI_LIMIT): int,
-                vol.Optional(CONF_SCAN_INTERVAL, default=DEFAULT_SCAN_INTERVAL): int,
+                vol.Optional(CONF_SCAN_INTERVAL, default=DEFAULT_SCAN_INTERVAL): vol.All(int, vol.Range(min=1)),
                 vol.Required(CONF_DEVICE_MODE, default=DEFAULT_DEVICE_MODE): selector.SelectSelector(
                     selector.SelectSelectorConfig(
                         options=[DEVICE_MODE_AUTO, DEVICE_MODE_SINGLE, DEVICE_MODE_CONTROLLER, DEVICE_MODE_AGENT],
@@ -144,7 +144,7 @@ class IPTimeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 vol.Required(CONF_PASSWORD, default=self.temp_config.get(CONF_PASSWORD)): selector.TextSelector(selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)),
                 vol.Optional(CONF_CONSIDER_HOME, default=self.temp_config.get(CONF_CONSIDER_HOME, DEFAULT_CONSIDER_HOME)): int,
                 vol.Optional(CONF_RSSI_LIMIT, default=self.temp_config.get(CONF_RSSI_LIMIT, DEFAULT_RSSI_LIMIT)): int,
-                vol.Optional(CONF_SCAN_INTERVAL, default=self.temp_config.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)): int,
+                vol.Optional(CONF_SCAN_INTERVAL, default=self.temp_config.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)): vol.All(int, vol.Range(min=1)),
             }),
             errors=errors
         )
@@ -204,8 +204,8 @@ class IPTimeOptionsFlowHandler(config_entries.OptionsFlow):
 
         options: dict[str, str] = {}
         coordinator = self.hass.data.get(DOMAIN, {}).get(self._config_entry.entry_id)
-        if coordinator and coordinator.data:
-            devices = coordinator.data.get("devices", {})
+        if coordinator and coordinator.tracker.data:
+            devices = coordinator.tracker.data
             for mac, info in devices.items():
                 if mac != "session" and isinstance(info, dict):
                     ip = info.get('ip', 'N/A')
@@ -254,7 +254,7 @@ class IPTimeOptionsFlowHandler(config_entries.OptionsFlow):
                 vol.Optional(CONF_TARGET, default=current_targets): cv.multi_select(options),
                 vol.Required(CONF_CONSIDER_HOME, default=current_timeout): int,
                 vol.Optional(CONF_RSSI_LIMIT, default=current_rssi_limit): int,
-                vol.Optional(CONF_SCAN_INTERVAL, default=current_scan_interval): int,
+                vol.Optional(CONF_SCAN_INTERVAL, default=current_scan_interval): vol.All(int, vol.Range(min=1)),
                 vol.Required(CONF_DEVICE_MODE, default=current_device_mode): selector.SelectSelector(
                     selector.SelectSelectorConfig(
                         options=[DEVICE_MODE_AUTO, DEVICE_MODE_SINGLE, DEVICE_MODE_CONTROLLER, DEVICE_MODE_AGENT],

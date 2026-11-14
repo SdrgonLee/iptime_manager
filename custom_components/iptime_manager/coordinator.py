@@ -1,9 +1,11 @@
 from datetime import timedelta
 from typing import Any, Dict, Optional
+from asyncio import Lock
+from copy import deepcopy
 import logging
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from homeassistant.helpers.update_coordinator import CoordinatorEntity, DataUpdateCoordinator, UpdateFailed
 from homeassistant.helpers.translation import async_get_translations
 from .const import *
 from .api import IPTimeAPI
@@ -13,60 +15,98 @@ from .api import IPTimeAPI
 
 _LOGGER = logging.getLogger(__name__)
 
+class IPTimeChangedEntity(CoordinatorEntity):
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        self._last_state = deepcopy(self._state_snapshot())
+
+    def _state_snapshot(self) -> tuple:
+        available = self.available
+        return (
+            available,
+            self.state if available else None,
+            self.state_attributes if available else None,
+            self.extra_state_attributes if available else None,
+            self.capability_attributes,
+            self.icon,
+        )
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        state = self._state_snapshot()
+        if state != getattr(self, "_last_state", None):
+            snapshot = deepcopy(state)
+            super()._handle_coordinator_update()
+            self._last_state = snapshot
+
+
+class IPTimeTrackerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
+    def __init__(self, hass: HomeAssistant, api: IPTimeAPI, entry: ConfigEntry, poll_lock: Lock) -> None:
+        self.api = api
+        self._poll_lock = poll_lock
+        self._rssi_limit = entry.options.get(
+            CONF_RSSI_LIMIT, entry.data.get(CONF_RSSI_LIMIT, DEFAULT_RSSI_LIMIT)
+        )
+        scan_interval = entry.options.get(
+            CONF_SCAN_INTERVAL, entry.data.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)
+        )
+        super().__init__(
+            hass, _LOGGER, name=f"{DOMAIN}_tracker_{entry.entry_id}",
+            update_interval=timedelta(seconds=max(1, scan_interval)),
+        )
+
+    async def _async_update_data(self) -> dict[str, Any]:
+        async with self._poll_lock:
+            if not await self.api.async_update(rssi_limit=self._rssi_limit):
+                raise UpdateFailed("Could not collect the router's client list")
+            return self.api.result
+
+
 class IPTimeDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
     """ipTIME API 데이터를 관리하는 중앙 코디네이터"""
 
     def __init__(self, hass: HomeAssistant, api: IPTimeAPI, entry: ConfigEntry) -> None:
         self.api = api
         self.entry = entry
-        self._last_web_update = 0.0
         self._firmware_update_notified = False
-        
-        scan_interval = entry.options.get(
-            CONF_SCAN_INTERVAL,
-            entry.data.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)
-        )
+        self._poll_lock = Lock()
+        self.tracker = IPTimeTrackerCoordinator(hass, api, entry, self._poll_lock)
         
         super().__init__(
             hass,
             _LOGGER,
             name=f"{DOMAIN}_{entry.data.get(CONF_URL)}",
-            update_interval=timedelta(seconds=scan_interval),
+            update_interval=timedelta(seconds=DEFAULT_INTERVAL),
         )
 
     async def _async_update_data(self) -> Dict[str, Any]:
         """주기적으로 API를 호출하여 최신 데이터를 가져옵니다."""
         try:
-            # 1. 기기 추적 정보 (하프싱킹)
-            rssi_limit = self.entry.options.get(
-                CONF_RSSI_LIMIT,
-                self.entry.data.get(CONF_RSSI_LIMIT, DEFAULT_RSSI_LIMIT)
-            )
-            success = await self.api.async_update(rssi_limit=rssi_limit)
-            
-            # 2. Web 데이터 수집 (기본/필수) - 재실 주기 단축 시 공유기 부하 예방을 위한 5초 격리/독립
-            # 다만 스위치 제어 등의 강제 갱신(caching_time 리셋) 시에는 즉시 동기화합니다.
-            import time
-            now = time.time()
-            if now - self._last_web_update >= 5.0 or getattr(self.api, "_last_caching_time", 300.0) == 0.0:
-                await self.api.async_get_web_data()
-                self._last_web_update = now
-
-            if not success:
-                _LOGGER.warning("Failed to collect web data from the router (Auth or communication error)")
-            
-            # 3. 데이터 통합 (Web + SNMP)
-            import copy
-            combined_data = {
-                "devices": copy.deepcopy(self.api.result),
-                "web": copy.deepcopy(self.api.web_result),
-            }
+            async with self._poll_lock:
+                if not await self.api.async_get_web_data():
+                    raise UpdateFailed("Could not collect the router's status")
+                if self.data is not None and self.api.web_result == self.data["web"]:
+                    combined_data = self.data
+                else:
+                    combined_data = {"web": deepcopy(self.api.web_result)}
 
             # 4. 외부 인터넷(WAN) 연결 상태 변화 감지 및 HA 알림 생성
             if self.data:
+                if combined_data is self.data:
+                    # The first firmware alert may still be pending after setup.
+                    firmware = combined_data["web"].get("firmware", {})
+                    current = firmware.get("version")
+                    latest = firmware.get("latest_version")
+                    if (
+                        self._firmware_update_notified
+                        or not current or not latest
+                        or current == "Unknown" or latest == "Unknown"
+                        or current == latest
+                    ):
+                        return combined_data
                 try:
                     old_web = self.data.get("web", {})
-                    new_web = self.api.web_result
+                    new_web = combined_data["web"]
                     
                     old_wan = old_web.get("wan", {}) if isinstance(old_web, dict) else {}
                     new_wan = new_web.get("wan", {}) if isinstance(new_web, dict) else {}
@@ -327,72 +367,7 @@ class IPTimeDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
                             }
                         )
 
-                    # B. 포트포워딩(Port Forwarding) 활성화 및 비활성화 감지 알림
-                    def get_pf_flag(web_data: Dict[str, Any]) -> bool:
-                        if not isinstance(web_data, dict):
-                            return False
-                        pf_config = web_data.get("portforward_config", {}) or {}
-                        if isinstance(pf_config, dict):
-                            return bool(pf_config.get("run"))
-                        return False
-
-                    old_pf_enable = get_pf_flag(old_web)
-                    new_pf_enable = get_pf_flag(new_web)
-
-                    if not old_pf_enable and new_pf_enable:
-                        _LOGGER.info("Port forwarding feature enabled - creating notification")
-                        title = get_notify_string("portforward_on.title", "Port Forwarding Enabled")
-                        message = get_notify_string(
-                            "portforward_on.message",
-                            "The Port Forwarding feature of the ipTIME router ({url}) has been turned On."
-                        ).format(url=self.entry.data.get(CONF_URL))
-
-                        await self.hass.services.async_call(
-                            "persistent_notification",
-                            "create",
-                            {
-                                "title": title,
-                                "message": message,
-                                "notification_id": "iptime_portforward_on"
-                            }
-                        )
-                        self.hass.bus.async_fire(
-                            "iptime_manager_security_alert",
-                            {
-                                "alert_type": "portforward",
-                                "state": "enabled",
-                                "display_name": "Port Forwarding",
-                                "url": self.entry.data.get(CONF_URL)
-                            }
-                        )
-                    elif old_pf_enable and not new_pf_enable:
-                        _LOGGER.info("Port forwarding feature disabled - creating notification")
-                        title = get_notify_string("portforward_off.title", "Port Forwarding Disabled")
-                        message = get_notify_string(
-                            "portforward_off.message",
-                            "The Port Forwarding feature of the ipTIME router ({url}) has been turned Off."
-                        ).format(url=self.entry.data.get(CONF_URL))
-
-                        await self.hass.services.async_call(
-                            "persistent_notification",
-                            "create",
-                            {
-                                "title": title,
-                                "message": message,
-                                "notification_id": "iptime_portforward_off"
-                            }
-                        )
-                        self.hass.bus.async_fire(
-                            "iptime_manager_security_alert",
-                            {
-                                "alert_type": "portforward",
-                                "state": "disabled",
-                                "display_name": "Port Forwarding",
-                                "url": self.entry.data.get(CONF_URL)
-                            }
-                        )
-
-                    # C. Wi-Fi 무선 네트워크 꺼짐 감지 알림
+                    # Wi-Fi 무선 네트워크 꺼짐 감지 알림
                     old_wireless = old_web.get("wireless", {}) if isinstance(old_web, dict) else {}
                     new_wireless = new_web.get("wireless", {}) if isinstance(new_web, dict) else {}
                     old_bss_list = old_wireless.get("bss", []) if isinstance(old_wireless, dict) else []
@@ -761,5 +736,7 @@ class IPTimeDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
                     _LOGGER.error(f"Error checking WAN link status change: {ex}")
 
             return combined_data
+        except UpdateFailed:
+            raise
         except Exception as err:
             raise UpdateFailed(f"Error fetching data from router: {err}") from err

@@ -1,14 +1,14 @@
 from __future__ import annotations
 
 import logging
-import re
-from typing import Any, Dict
+from time import monotonic
+from typing import Any
 
 from homeassistant.components.select import SelectEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from .coordinator import IPTimeChangedEntity
 
 from .const import DOMAIN, CONF_URL
 from .api import format_channel_string
@@ -16,50 +16,12 @@ from .api import format_channel_string
 _LOGGER = logging.getLogger(__name__)
 
 
-def _get_geoip_data(web_data: Dict[str, Any]) -> Dict[str, Any]:
-    if not isinstance(web_data, dict):
-        return {}
-    security = web_data.get("security", {})
-    if isinstance(security, dict):
-        geoip = security.get("geoip")
-        if isinstance(geoip, dict):
-            return geoip
-    geoip = web_data.get("geoip")
-    return geoip if isinstance(geoip, dict) else {}
-
-
-def _policy_to_option(enable: Any, policy: Any) -> str | None:
-    if not bool(enable):
-        return "Off"
-
-    value = str(policy or "").lower()
-    mapping = {
-        "off": "Off",
-        "drop": "Country Block",
-        "accept": "Country Allow",
-    }
-    return mapping.get(value)
-
-
-def _option_to_policy(option: str) -> tuple[bool, str]:
-    mapping = {
-        "Off": (False, "off"),
-        "Country Block": (True, "drop"),
-        "Country Allow": (True, "accept"),
-    }
-    return mapping.get(option, (False, "off"))
-
-
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities) -> None:
     coordinator = hass.data[DOMAIN][entry.entry_id]
     web_data = (coordinator.data or {}).get("web", {})
-    entities = [IPTimeGeoIPSelect(coordinator, entry)]
+    entities = []
     
     if coordinator.api._beta_ui:
-        # LED 설정이 지원되는 모델일 경우에만 생성
-        if web_data.get("led_config") is not None:
-            entities.append(IPTimeNightLEDSelect(coordinator, entry))
-            
         # 자동 재부팅 설정이 지원되는 모델일 경우에만 생성
         if web_data.get("reboot_timer") is not None:
             entities.append(IPTimeRebootDaySelect(coordinator, entry))
@@ -73,186 +35,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
                 if band_id:
                     entities.append(IPTimeWifiChannelSelect(coordinator, entry, band_id))
 
-            
-
-        
     async_add_entities(entities)
 
 
-# 요약: GeoIP 정책을 3단계 select로 노출한다.
-# 연결 파일: api.py, coordinator.py, sensor.py
-class IPTimeGeoIPSelect(CoordinatorEntity, SelectEntity):
-    """GeoIP policy selector."""
-
-    _attr_options = ["Off", "Country Block", "Country Allow"]
-
-    def __init__(self, coordinator, entry) -> None:
-        super().__init__(coordinator)
-        self._entry = entry
-        self._attr_unique_id = f"{entry.entry_id}_geoip_policy"
-        self._attr_name = f"GeoIP Policy ({entry.data.get(CONF_URL)})"
-        self._attr_icon = "mdi:earth"
-        self._attr_entity_category = EntityCategory.CONFIG
-
-    @property
-    def current_option(self) -> str | None:
-        web_data = self.coordinator.data.get("web", {}) if self.coordinator.data else {}
-        geoip = _get_geoip_data(web_data)
-        return _policy_to_option(geoip.get("enable"), geoip.get("policy"))
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        web_data = self.coordinator.data.get("web", {}) if self.coordinator.data else {}
-        geoip = _get_geoip_data(web_data)
-        return {
-            "enable": geoip.get("enable"),
-            "policy": geoip.get("policy"),
-            "drop_list": geoip.get("drop_list"),
-            "accept_list": geoip.get("accept_list"),
-        }
-
-    async def async_select_option(self, option: str) -> None:
-        enable, policy = _option_to_policy(option)
-        if policy == "off":
-            await self.coordinator.api.async_set_web_geoip_policy("off")
-            await self.coordinator.api.async_set_web_geoip_enable(False)
-        else:
-            # 락아웃(Lockout) 방지 지능형 안전 장치: Country Allow(accept) 선택 시 한국('kr')이 누락된 경우 자동 추가
-            if policy == "accept":
-                web_data = self.coordinator.data.get("web", {}) if self.coordinator.data else {}
-                geoip = _get_geoip_data(web_data)
-                accept_list = geoip.get("accept_list", [])
-                if not isinstance(accept_list, list):
-                    accept_list = []
-                
-                # 'kr'이 없으면 추가 등록 시도
-                if "kr" not in [str(c).lower() for c in accept_list]:
-                    _LOGGER.info("GeoIP 정책을 국내 허용(Country Allow)으로 변경 시 한국('kr') 자동 등록 - 락아웃 예방")
-                    try:
-                        # geoip/policy/accept/add API를 호출해 'kr' 국가를 허용 리스트에 지능적으로 추가
-                        await self.coordinator.api._async_service_json("geoip/policy/accept/add", "kr")
-                    except Exception as err:
-                        _LOGGER.warning(f"GeoIP 한국('kr') 자동 등록 실패: {err}")
-
-            await self.coordinator.api.async_set_web_geoip_enable(enable)
-            await self.coordinator.api.async_set_web_geoip_policy(policy)
-        await self.coordinator.async_request_refresh()
-
-    @property
-    def device_info(self) -> dict[str, Any]:
-        web_data = self.coordinator.data.get("web", {}) if self.coordinator.data else {}
-        model = web_data.get("model", "ipTIME Router")
-        return {
-            "identifiers": {(DOMAIN, self._entry.entry_id)},
-            "name": model,
-            "manufacturer": "EFM Networks",
-            "model": model,
-        }
-
-
-# 요약: 나이트 LED 모드 설정 셀렉터 (연결될 파일: api.py)
-class IPTimeNightLEDSelect(CoordinatorEntity, SelectEntity):
-    """Night LED Mode selector."""
-
-    _attr_options = ["Disabled", "Always Off", "Time Scheduled"]
-
-    def __init__(self, coordinator, entry) -> None:
-        super().__init__(coordinator)
-        self._entry = entry
-        self._attr_unique_id = f"{entry.entry_id}_night_led"
-        self._attr_name = f"Night LED Mode ({entry.data.get(CONF_URL)})"
-        self._attr_icon = "mdi:led-off"
-        self._attr_entity_category = EntityCategory.CONFIG
-        self._last_valid_on = None
-        self._last_valid_off = None
-
-    @property
-    def current_option(self) -> str | None:
-        web_data = self.coordinator.data.get("web", {}) if self.coordinator.data else {}
-        led_config = web_data.get("led_config", {})
-        if not isinstance(led_config, dict):
-            led_config = {}
-        mode = led_config.get("mode", "on")
-
-        # ipTIME 나이트 LED API: mode="on"이 LED가 항상 켜진 상태(Disabled), mode="off"가 LED가 항상 꺼진 상태(Always Off), mode="schedule"이 스케줄 작동(Time Scheduled)
-        # 연결될 파일: api.py
-        mapping = {
-            "on": "Disabled",
-            "off": "Always Off",
-            "schedule": "Time Scheduled"
-        }
-        return mapping.get(mode, "Disabled")
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        web_data = self.coordinator.data.get("web", {}) if self.coordinator.data else {}
-        led_config = web_data.get("led_config", {})
-        if not isinstance(led_config, dict):
-            led_config = {}
-            
-        on = led_config.get("on")
-        if on is not None:
-            self._last_valid_on = on
-        on_time = self._last_valid_on if self._last_valid_on is not None else 22
-        
-        off = led_config.get("off")
-        if off is not None:
-            self._last_valid_off = off
-        off_time = self._last_valid_off if self._last_valid_off is not None else 8
-
-        return {
-            "mode": led_config.get("mode", "on"),
-            "start_time": f"{on_time:02d}:00",
-            "end_time": f"{off_time:02d}:00",
-            "start_hour": on_time,
-            "end_hour": off_time,
-            "start_minutes": on_time * 60,
-            "end_minutes": off_time * 60,
-        }
-
-    async def async_select_option(self, option: str) -> None:
-        # ipTIME 나이트 LED API: Disabled -> "on" (LED 항상 켜짐), Always Off -> "off" (LED 항상 꺼짐), Time Scheduled -> "schedule" (스케줄 작동)
-        # 연결될 파일: api.py
-        mapping = {
-            "Disabled": "on",
-            "Always Off": "off",
-            "Time Scheduled": "schedule"
-        }
-        mode = mapping.get(option, "on")
-
-        # 기존 시간 값을 유지하거나 기본값(22:00 ~ 08:00)을 사용
-        web_data = self.coordinator.data.get("web", {}) if self.coordinator.data else {}
-        led_config = web_data.get("led_config", {})
-        if not isinstance(led_config, dict):
-            led_config = {}
-            
-        on = led_config.get("on")
-        if on is not None:
-            self._last_valid_on = on
-        on_time = self._last_valid_on if self._last_valid_on is not None else 22
-        
-        off = led_config.get("off")
-        if off is not None:
-            self._last_valid_off = off
-        off_time = self._last_valid_off if self._last_valid_off is not None else 8
-
-        await self.coordinator.api.async_set_web_led_config(mode, on_time, off_time)
-        await self.coordinator.async_request_refresh()
-
-    @property
-    def device_info(self) -> dict[str, Any]:
-        web_data = self.coordinator.data.get("web", {}) if self.coordinator.data else {}
-        model = web_data.get("model", "ipTIME Router")
-        return {
-            "identifiers": {(DOMAIN, self._entry.entry_id)},
-            "name": model,
-            "manufacturer": "EFM Networks",
-            "model": model,
-        }
-
-
 # 요약: 자동 재시작 요일을 셀렉트로 제어한다. (연결 파일: api.py)
-class IPTimeRebootDaySelect(CoordinatorEntity, SelectEntity):
+class IPTimeRebootDaySelect(IPTimeChangedEntity, SelectEntity):
     """Auto Reboot Day selector."""
 
     _attr_options = ["Everyday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
@@ -341,7 +128,7 @@ class IPTimeRebootDaySelect(CoordinatorEntity, SelectEntity):
 
 
 # 요약: 무선 채널 제어 셀렉터 (연결될 파일: api.py)
-class IPTimeWifiChannelSelect(CoordinatorEntity, SelectEntity):
+class IPTimeWifiChannelSelect(IPTimeChangedEntity, SelectEntity):
     """Wi-Fi Channel selector."""
 
     def __init__(self, coordinator, entry, band: str) -> None:
@@ -364,7 +151,7 @@ class IPTimeWifiChannelSelect(CoordinatorEntity, SelectEntity):
         self._attr_icon = "mdi:wifi-cog"
         self._attr_entity_category = EntityCategory.CONFIG
         self._cached_options = ["auto"]
-        self._last_options_update = 0.0
+        self._next_options_update = 0.0
 
     @property
     def current_option(self) -> str | None:
@@ -384,24 +171,22 @@ class IPTimeWifiChannelSelect(CoordinatorEntity, SelectEntity):
     @property
     def options(self) -> list[str]:
         """사용 가능한 채널 목록 반환 (API 부하 최소화를 위한 1시간 캐싱)."""
-        import time
-        now = time.time()
-        
-        # 1시간(3600초) 마다 또는 최초 진입 시 채널 목록을 공유기 API에서 새로 가져옴
-        if not self._cached_options or len(self._cached_options) <= 1 or (now - self._last_options_update) > 3600.0:
+        now = monotonic()
+        if now >= self._next_options_update:
+            self._next_options_update = now + 60
             self.hass.async_create_task(self._async_update_options())
             
         return self._cached_options
 
     async def _async_update_options(self) -> None:
         """비동기식으로 채널 목록을 수집하여 캐시 갱신."""
-        import time
         try:
             channels = await self.coordinator.api.async_get_wireless_channel_list(self._band)
-            if channels and len(channels) > 0:
+            if len(channels) > 1:
+                self._next_options_update = monotonic() + 3600
+            if channels and channels != self._cached_options:
                 self._cached_options = channels
-                self._last_options_update = time.time()
-                self.async_write_ha_state()
+                self._handle_coordinator_update()
         except Exception as err:
             _LOGGER.debug(f"Failed to update channel list for band {self._band}: {err}")
 

@@ -1,14 +1,12 @@
 from __future__ import annotations
 
 import logging
-import asyncio
 import time
 import re
 import html
 import aiohttp
 from typing import Any, Dict, List, Optional, Final
 from json import loads
-from datetime import timedelta
 from .const import *
 from .easymesh_wifi import build_easymesh_band_enable_payload
 
@@ -94,6 +92,9 @@ class IPTimeAPI:
         self.result: Dict[str, Any] = {}
         self.web_result: Dict[str, Any] = {}
         self._latest_firmware_version: Any = None
+        self._latest_firmware_checked_at = 0.0
+        self._next_firmware_poll = 0.0
+        self._next_session_update = 0.0
         self._last_caching_time = 0.0
         self._cached_model = None
 
@@ -185,7 +186,7 @@ class IPTimeAPI:
         """데이터 업데이트 메인 로직 (안정화)."""
         # 1. 세션이 없으면 로그인 시도
         if not self.efm_session_id:
-            if await self.verify_beta_ui():
+            if self._beta_ui or await self.verify_beta_ui():
                 self._beta_ui = True
                 if not await self.login_beta_ui(): 
                     _LOGGER.debug("베타 UI 로그인 실패")
@@ -202,26 +203,31 @@ class IPTimeAPI:
 
         # 2. 데이터 수집
         if self._beta_ui:
-            await asyncio.sleep(1)
-            self.result = await self.beta_ui_wlan_check(rssi_limit=rssi_limit)
-            await self.session_update_beta_ui()
+            result = await self.beta_ui_wlan_check()
         elif self._ismobile:
-            self.result = await self.m_wlan_check(rssi_limit=rssi_limit)
+            result = await self.m_wlan_check()
         else:
-            self.result = await self.wlan_check(rssi_limit=rssi_limit)
-        
-        if len(self.result) > 1:
-            first_mac = next(iter(self.result.keys())) if self.result else "None"
-            _LOGGER.info(f"ipTIME Web 데이터 수집 성공: 기기 {len(self.result)-1}대 감지 (최초 MAC: {first_mac})")
-        else:
-            _LOGGER.warning("ipTIME Web 데이터 수집 실패: 로그인 세션은 확보했으나 기기 목록이 비어있습니다.")
-        
-        # 3. 세션 만료 체크
-        if self.result.get("session") is False:
+            result = await self.wlan_check()
+
+        if result.get("session") is False:
             _LOGGER.debug("세션 만료 감지, 다음 주기에서 재로그인 시도")
             self.efm_session_id = None
             return False
-            
+
+        if self._beta_ui:
+            now = time.monotonic()
+            if now >= self._next_session_update:
+                # Avoid sending a keepalive for every client scan.
+                self._next_session_update = now + 30
+                await self.session_update_beta_ui()
+
+        if self._ismesh:
+            mesh_stations = await self.get_mesh_station(rssi_limit=rssi_limit)
+            if mesh_stations is None:
+                return False
+            result.update(mesh_stations)
+
+        self.result = result
         return True
 
     async def async_get_web_data(self) -> bool:
@@ -232,50 +238,25 @@ class IPTimeAPI:
             self.web_result = {}
 
         if not self._beta_ui:
-            return False
+            return bool(self.efm_session_id)
 
         try:
+            ports = await self._async_service_json("port/link/status")
+            ports_data = ports.get("result")
+            if isinstance(ports_data, list):
+                self.web_result["ports"] = ports_data
+            elif "ports" in self.web_result:
+                # A previously supported endpoint can detect a failed refresh.
+                return False
+
             now = time.time()
             # 5분(300초) 단위 캐싱 조건 성립 여부 판단
             use_cache = (now - self._last_caching_time) < 300.0
 
-            # 1. 펌웨어 기본 정보 수집 (내부 24시간 캐시 지원됨)
-            firmware = await self._async_service_json("firmware/info")
-            if firmware.get("result"):
-                self.web_result["firmware"] = firmware["result"]
-
-            firmware_block = self.web_result.setdefault("firmware", {})
-            latest_cached = (
-                self._latest_firmware_version is not None
-                and (now - self._latest_firmware_checked_at) < 86400
-            )
-            if latest_cached:
-                firmware_block["latest_version"] = self._latest_firmware_version
-                if self._latest_firmware_raw is not None:
-                    firmware_block["latest_raw"] = self._latest_firmware_raw
-            else:
-                firmware_latest = await self._async_service_json("firmware/version/latest")
-                if firmware_latest.get("result") is not None:
-                    latest_result = firmware_latest.get("result")
-                    if isinstance(latest_result, dict):
-                        latest_version = (
-                            latest_result.get("version")
-                            or latest_result.get("latest")
-                            or latest_result.get("value")
-                            or latest_result.get("result")
-                            or latest_result.get("ok")
-                        )
-                        self._latest_firmware_raw = latest_result
-                    else:
-                        latest_version = latest_result
-                        self._latest_firmware_raw = None
-
-                    if latest_version is not None:
-                        self._latest_firmware_version = latest_version
-                        self._latest_firmware_checked_at = now
-                        firmware_block["latest_version"] = latest_version
-                        if self._latest_firmware_raw is not None:
-                            firmware_block["latest_raw"] = self._latest_firmware_raw
+            poll_time = time.monotonic()
+            if poll_time >= self._next_firmware_poll:
+                self._next_firmware_poll = poll_time + 300
+                await self._async_refresh_firmware(poll_time)
 
             # 2. 공유기 모델명 수집 (평생 캐시 처리: CGI 파싱 부하 최소화)
             if self._cached_model is not None:
@@ -287,7 +268,7 @@ class IPTimeAPI:
                 self._cached_model = model_name
                 self.web_result["model"] = model_name
 
-            # 3. 자주 변경되지 않는 설정값 (LAN, WAN, DNS, GeoIP, ACL, DoS, UPnP, Reboot, WireGuard 등) 캐싱 처리
+            # 3. 자주 변경되지 않는 설정값 캐싱 처리
             if not use_cache or "lan" not in self.web_result or "wan" not in self.web_result:
                 _LOGGER.debug("정적 설정 데이터 캐시 만료 또는 최초 수집: 공유기 쿼리 수행 시작")
                 
@@ -299,101 +280,34 @@ class IPTimeAPI:
                 if wan.get("result"):
                     self.web_result["wan"] = wan["result"]
 
-                dns = await self._async_service_json("network/dns/info")
-                if dns.get("result"):
-                    self.web_result["dns"] = dns["result"]
-
                 geoip = await self._async_service_json("geoip/get")
-                if geoip.get("result"):
-                    self.web_result.setdefault("security", {})["geoip"] = geoip["result"]
-                    self.web_result["geoip"] = geoip["result"]
-
-                geoip_pcount = await self._async_service_json("geoip/blocked/pcount")
-                if geoip_pcount.get("result") is not None:
-                    blocked_result = geoip_pcount.get("result")
-                    blocked_count = None
-                    if isinstance(blocked_result, dict):
-                        if "total" in blocked_result and blocked_result["total"] is not None:
-                            blocked_count = blocked_result["total"]
-                        elif "count" in blocked_result and blocked_result["count"] is not None:
-                            blocked_count = blocked_result["count"]
-                        elif "list" in blocked_result and isinstance(blocked_result["list"], list):
-                            blocked_count = len(blocked_result["list"])
-                    elif isinstance(blocked_result, list):
-                        blocked_count = len(blocked_result)
-                    elif isinstance(blocked_result, (int, float)):
-                        blocked_count = int(blocked_result)
-                    if blocked_count is not None:
-                        self.web_result["geoip_blocked_pcount"] = blocked_count
+                geoip_data = geoip.get("result")
+                if isinstance(geoip_data, dict) and geoip_data:
+                    self.web_result["geoip"] = {"enable": geoip_data.get("enable", False)}
 
                 accesslist = await self._async_service_json("acl/config")
                 if accesslist.get("result"):
-                    self.web_result.setdefault("security", {})["accesslist"] = accesslist["result"]
                     self.web_result["acl"] = accesslist["result"]
 
                 dos_config = await self._async_service_json("dos/config")
                 if dos_config.get("result"):
                     self.web_result["security_dos"] = dos_config["result"]
 
-                upnp_config = await self._async_service_json("upnp/config")
-                if upnp_config.get("result") is not None:
-                    self.web_result["upnp_config"] = upnp_config["result"]
-
-                portforward_config = await self._async_service_json("portforward/config")
-                if portforward_config.get("result") is not None:
-                    self.web_result["portforward_config"] = portforward_config["result"]
-
-                upnp_relay = await self._async_service_json("upnp/relay")
-                if upnp_relay.get("result") is not None:
-                    self.web_result["upnp_relay"] = upnp_relay.get("result")
-
                 reboot_timer = await self._async_service_json("reboot/timer")
                 if reboot_timer.get("result") is not None:
                     self.web_result["reboot_timer"] = reboot_timer["result"]
 
-                nat_config = await self._async_service_json("nat/config")
-                if nat_config.get("result") is not None:
-                    self.web_result["nat_config"] = nat_config["result"]
-
                 self._last_caching_time = now
 
-            # 4. 실시간 수집 데이터 (유선 포트, 무선 상태, LED, WAN 링크 상태는 매 주기마다 필수 조회)
-            ports = await self._async_service_json("port/link/status")
-            if ports.get("result"):
-                self.web_result["ports"] = ports["result"]
-
-            wg_server = await self._async_service_json("wg/server/show")
-            if wg_server.get("result") is not None:
-                wg_data = wg_server["result"]
-                if isinstance(wg_data, dict):
-                    peers = wg_data.get("peers", wg_data.get("peer", wg_data.get("clients", [])))
-                    if isinstance(peers, dict):
-                        peers = list(peers.values())
-                    connected_peers = 0
-                    if isinstance(peers, list):
-                        for peer in peers:
-                            if not isinstance(peer, dict):
-                                continue
-                            if "connected" in peer or "active" in peer:
-                                connected_peers += int(bool(peer.get("connected", peer.get("active"))))
-                            else:
-                                connected_peers += int(bool(peer.get("latest_handshake") or peer.get("last_handshake") or peer.get("handshake")))
-                    self.web_result["wg_server"] = {
-                        "run": bool(wg_data.get("active", False)),
-                        "ip": wg_data.get("address", "10.0.21.1"),
-                        "subnet": "24",
-                        "port": int(wg_data.get("port", 53344)),
-                        "nat": bool(wg_data.get("nat", True)),
-                        "connected_peer_count": connected_peers,
-                    }
-                else:
-                    self.web_result["wg_server"] = {}
-
-            wireless_info = await self._async_service_json("wireless/info")
-            wireless_band = await self._async_service_json("wireless/band/info")
+            # 4. 실시간 수집 데이터 (유선 포트, 무선, EasyMesh 상태)
             wireless_band_show = await self._async_service_json("wireless/band/show")
+            band_data = wireless_band_show.get("result")
+            if not isinstance(band_data, list) or not band_data:
+                wireless_band_info = await self._async_service_json("wireless/band/info")
+                band_data = wireless_band_info.get("result")
+            if not isinstance(band_data, list):
+                band_data = []
             wireless_bss = await self._async_service_json("wireless/bss/show")
-            wireless_client = await self._async_service_json("wireless/client/show")
 
             easymesh_info = await self._async_service_json("easymesh/info")
             easymesh_config = await self._async_service_json("easymesh/config")
@@ -410,22 +324,11 @@ class IPTimeAPI:
                     "agents": easymesh_agents.get("result", {}),
                 }
             
-            band_data = wireless_band_show.get("result") or wireless_band.get("result") or []
-            if wireless_info.get("result") or band_data or wireless_bss.get("result"):
+            if band_data or wireless_bss.get("result") is not None:
                 self.web_result["wireless"] = {
-                    "info": wireless_info.get("result", []),
                     "band": band_data,
                     "bss": wireless_bss.get("result", []),
-                    "client": wireless_client.get("result", []),
                 }
-
-            led_config = await self._async_service_json("led/config")
-            if led_config.get("result") is not None:
-                self.web_result["led_config"] = led_config["result"]
-
-            wan_heartbeat = await self._async_service_json("wan/heartbeat")
-            if wan_heartbeat.get("result") is not None:
-                self.web_result["wan_heartbeat"] = wan_heartbeat["result"]
 
             uptime = None
             for candidate in (self.web_result.get("wan", {}), self.web_result.get("lan", {})):
@@ -433,10 +336,40 @@ class IPTimeAPI:
                     uptime = candidate.get("connected_period")
                     break
             self.web_result["uptime"] = uptime
-            return True
+            return (
+                isinstance(ports_data, list)
+                or bool(band_data)
+                or isinstance(wireless_bss.get("result"), list)
+                or any(
+                    isinstance(response.get("result"), (dict, list))
+                    for response in (easymesh_info, easymesh_config, easymesh_agents)
+                )
+            )
         except Exception as err:
             _LOGGER.debug(f"웹 데이터 수집 실패: {err}")
             return False
+
+    async def _async_refresh_firmware(self, now: float) -> None:
+        firmware = (await self._async_service_json("firmware/info")).get("result")
+        firmware_block = self.web_result.setdefault("firmware", {})
+        current = firmware.get("version") if isinstance(firmware, dict) else None
+        if isinstance(current, str) and current:
+            firmware_block["version"] = current
+
+        if self._latest_firmware_version is not None and now - self._latest_firmware_checked_at < 86400:
+            return
+
+        latest = (await self._async_service_json("firmware/version/latest")).get("result")
+        if isinstance(latest, dict):
+            latest = next(
+                (latest[key] for key in ("version", "latest", "value", "result", "ok")
+                 if isinstance(latest.get(key), str) and latest[key]),
+                None,
+            )
+        if isinstance(latest, str) and latest:
+            self._latest_firmware_version = latest
+            self._latest_firmware_checked_at = now
+            firmware_block["latest_version"] = latest
 
     async def async_set_web_wireless_bss_enable(self, bss: str, enable: bool) -> bool:
         """Toggle a wireless BSS using the beta UI."""
@@ -570,105 +503,6 @@ class IPTimeAPI:
         self._last_caching_time = 0.0 # 캐시 강제 만료
         return bool(response)
 
-    async def async_set_web_geoip_enable(self, enable: bool) -> bool:
-        if not self._beta_ui:
-            return False
-
-        response = await self._async_service_json("geoip/enable", enable)
-        if response.get("error"):
-            _LOGGER.warning(f"GeoIP 제어 실패: {response.get('error')}")
-            return False
-        self._last_caching_time = 0.0 # 캐시 강제 만료
-        return bool(response)
-
-    async def async_set_web_geoip_policy(self, policy: str) -> bool:
-        if not self._beta_ui:
-            return False
-
-        response = await self._async_service_json("geoip/policy/set", {"policy": policy})
-        if response.get("error"):
-            _LOGGER.warning(f"GeoIP policy 제어 실패: {response.get('error')}")
-            return False
-        self._last_caching_time = 0.0 # 캐시 강제 만료
-        return bool(response)
-
-    async def async_set_web_accesslist_enable(self, enable: bool) -> bool:
-        if not self._beta_ui:
-            return False
-
-        # wan1 항목 찾기
-        wan1 = None
-        if "acl" in self.web_result:
-            for entry in self.web_result["acl"]:
-                if entry.get("ntag") == "wan1":
-                    wan1 = entry
-                    break
-        
-        if wan1:
-            port = wan1.get("open", {}).get("port", 80)
-            params = {"ntag": "wan1", "open": {"flag": bool(enable), "port": port}}
-            response = await self._async_service_json("acl/config", params)
-            if not response.get("error"):
-                self._last_caching_time = 0.0 # 캐시 강제 만료
-                return True
-            return False
-        return False
-
-    async def async_set_security_switch(self, key: str, value: bool) -> bool:
-        """보안 스위치 설정 변경 (dos/config 기반)"""
-        if not self._beta_ui:
-            return False
-
-        success = False
-        if key in ["syn_flood", "smurf", "ip_source_routing", "ip_spoofing", "inbound_ping", "outbound_ping"]:
-            params = {key: bool(value)}
-            response = await self._async_service_json("dos/config", params)
-            success = not response.get("error")
-        
-        elif key == "csrf":
-            params = {"csrf": {"run": bool(value)}}
-            response = await self._async_service_json("dos/config", params)
-            success = not response.get("error")
-            
-        elif key == "arp_virus":
-            pps = 5
-            if "security_dos" in self.web_result and "arp_virus" in self.web_result["security_dos"]:
-                pps = self.web_result["security_dos"]["arp_virus"].get("pps", 5)
-            params = {"arp_virus": {"run": bool(value), "pps": pps}}
-            response = await self._async_service_json("dos/config", params)
-            success = not response.get("error")
-
-        if success:
-            self._last_caching_time = 0.0 # 캐시 강제 만료
-        return success
-
-    async def async_set_web_led_config(self, mode: str, on_time: int = 22, off_time: int = 8) -> bool:
-        # 요약: 나이트 LED 모드를 변경한다. (연결될 파일: select.py)
-        # 스케줄 정보가 누락되어 작동 안 하는 결함을 예방하기 위해, 항상 on, off 파라미터를 동반 주입
-        if not self._beta_ui:
-            return False
-        params: Dict[str, Any] = {
-            "mode": mode,
-            "on": int(on_time),
-            "off": int(off_time),
-            "commit": True
-        }
-        response = await self._async_service_json("led/config", params)
-        if not response.get("error"):
-            self._last_caching_time = 0.0 # 캐시 강제 만료
-            return True
-        return False
-
-    async def async_set_web_upnp_enable(self, enable: bool) -> bool:
-        # UPnP 설정 (연결될 파일: switch.py)
-        if not self._beta_ui:
-            return False
-        response = await self._async_service_json("upnp/config", bool(enable))
-        if not response.get("error"):
-            self._last_caching_time = 0.0 # 캐시 강제 만료
-            return True
-        return False
-
     async def async_set_web_reboot_timer(self, run: bool, hour: int = 4, min_time: int = 0, days: List[str] = ["Fri"]) -> bool:
         # 자동 재시작 설정 (연결될 파일: switch.py)
         if not self._beta_ui:
@@ -680,20 +514,6 @@ class IPTimeAPI:
             "days": days
         }
         response = await self._async_service_json("reboot/timer", params)
-        if not response.get("error"):
-            self._last_caching_time = 0.0 # 캐시 강제 만료
-            return True
-        return False
-
-    async def async_set_web_wan_heartbeat(self, run: bool, interval: int = 3) -> bool:
-        # WAN포트 끊김 시 재연결 설정 (연결될 파일: switch.py)
-        if not self._beta_ui:
-            return False
-        params = {
-            "run": bool(run),
-            "interval": int(interval)
-        }
-        response = await self._async_service_json("wan/heartbeat", params)
         if not response.get("error"):
             self._last_caching_time = 0.0 # 캐시 강제 만료
             return True
@@ -715,10 +535,10 @@ class IPTimeAPI:
                     ids = re.findall(re.compile(r"\w{16}"), text)
                     if ids:
                         self.efm_session_id = ids[0]
-                        _LOGGER.debug(f"로그인 성공 (URL: {urn}, Session: {self.efm_session_id[:4]}****)")
+                        _LOGGER.debug("공유기 로그인 성공")
                         return True
             except Exception as err:
-                _LOGGER.debug(f"로그인 시도 실패 ({urn}): {err}")
+                _LOGGER.debug("공유기 로그인 요청 실패 (%s)", type(err).__name__)
         return False
 
     async def m_login(self) -> bool:
@@ -773,7 +593,6 @@ class IPTimeAPI:
             session = await self._async_get_session()
             async with session.post(url, json=data, headers=headers) as response:
                 res_json = await response.json()
-                _LOGGER.debug(f"베타 UI 로그인 응답: {res_json}")
                 
                 if res_json and res_json.get('result') == "done":
                     # 쿠키 추출 수동화 및 자동화 병합 최종 강화 (연결될 파일: select.py, switch.py)
@@ -794,16 +613,17 @@ class IPTimeAPI:
                             
                     if session_id:
                         self.efm_session_id = session_id
-                        _LOGGER.debug(f"베타 UI 세션 아이디 확보 성공 (Session ID: {self.efm_session_id[:4]}****)")
+                        self._next_session_update = 0.0
+                        _LOGGER.debug("베타 UI 로그인 성공")
                     else:
                         _LOGGER.debug("쿠키가 없으나 결과가 done이므로 계속 진행")
                         # 쿠키가 없어도 일단 진행 (이후 요청에서 401 뜨면 그때 세션 파기)
                     
                     return True
                 else:
-                    _LOGGER.warning(f"베타 UI 로그인 거부됨: {res_json}")
+                    _LOGGER.warning("베타 UI 로그인 거부됨 (HTTP %s)", response.status)
         except Exception as err:
-            _LOGGER.warning(f"베타 UI 로그인 예외 발생: {err}")
+            _LOGGER.warning("베타 UI 로그인 요청 실패 (%s)", type(err).__name__)
         return False
 
     async def verify_beta_ui(self) -> bool:
@@ -854,24 +674,30 @@ class IPTimeAPI:
         except Exception: pass
         return self._ismesh
 
-    async def wlan_check(self, rssi_limit: int = DEFAULT_RSSI_LIMIT) -> Dict:
+    async def wlan_check(self) -> Dict:
         result_dict = {"session": True}
         for band, urn in [("2.4GHz", WLAN_2G_URN), ("5GHz", WLAN_5G_URN)]:
             text = await self._async_request("GET", self._url + urn)
+            if not text:
+                return {"session": False}
             result_dict.update(self.device_parsing(_extract_table_rows(text), band))
-        if self._ismesh: result_dict.update(await self.get_mesh_station(rssi_limit=rssi_limit))
         return result_dict
 
-    async def m_wlan_check(self, rssi_limit: int = DEFAULT_RSSI_LIMIT) -> Dict:
+    async def m_wlan_check(self) -> Dict:
         result_dict = {"session": True}
+        valid_band = False
         for band, urn in [("2.4GHz", M_WLAN_2G_URN), ("5GHz", M_WLAN_5G_URN)]:
             text = await self._async_request("GET", self._url + urn)
-            try: result_dict.update(self.json_parsing(loads(text), band))
-            except Exception: continue
-        if self._ismesh: result_dict.update(await self.get_mesh_station(rssi_limit=rssi_limit))
-        return result_dict
+            try:
+                data = loads(text)
+                if isinstance(data, dict) and isinstance(data.get("stalist"), list):
+                    result_dict.update(self.json_parsing(data, band))
+                    valid_band = True
+            except (ValueError, TypeError, AttributeError):
+                continue
+        return result_dict if valid_band else {"session": False}
 
-    async def beta_ui_wlan_check(self, rssi_limit: int = DEFAULT_RSSI_LIMIT) -> Dict:
+    async def beta_ui_wlan_check(self) -> Dict:
         """베타 UI 기기 목록 조회 (수동 쿠키 주입)."""
         url = f"{self._url}{BETA_SERVICE_URN}"
         data = {"method":"network/interface/lan/stations"}
@@ -883,9 +709,8 @@ class IPTimeAPI:
             session = await self._async_get_session()
             async with session.post(url, json=data, headers=headers) as response:
                 res_json = await response.json()
-                if res_json and res_json.get('result'):
+                if response.ok and isinstance(res_json, dict) and isinstance(res_json.get("result"), list):
                     res = self.beta_ui_device_parsing(res_json['result'])
-                    if self._ismesh: res.update(await self.get_mesh_station(rssi_limit=rssi_limit))
                     res["session"] = True
                     return res
         except Exception as err:
@@ -907,15 +732,11 @@ class IPTimeAPI:
             ip = info.get("ip", "N/A")
             name = info.get("name", "N/A")
             band = wireless.get("bss", conn.get("type", "Unknown"))
-            stay_time_sec = wireless.get("duration", 0)
-            rssi = wireless.get("rssi")
             
             result_dict[mac] = {
                 "ip": ip,
                 "name": name,
                 "band": band,
-                "stay_time": f"{stay_time_sec}초",
-                "rssi": rssi,
                 "state": "home"
             }
         return result_dict
@@ -935,7 +756,7 @@ class IPTimeAPI:
             if len(tds) == 4:
                 mac = tds[0].strip().replace(":", "").replace("-", "").lower()
                 ip_match = re.search(r"\d{1,3}(?:\.\d{1,3}){3}", tds[3])
-                result_dict[mac] = {"ip": ip_match.group() if ip_match else "N/A", "band": band, "stay_time": tds[2].strip(), "state": "home"}
+                result_dict[mac] = {"ip": ip_match.group() if ip_match else "N/A", "band": band, "state": "home"}
         return result_dict
 
     def json_parsing(self, response_json: Dict, band: str) -> Dict:
@@ -944,20 +765,22 @@ class IPTimeAPI:
             if "mac" in device:
                 mac = device["mac"].strip().replace(":", "").replace("-", "").lower()
                 result_dict[mac] = {"ip": device.get("ipaddr", "N/A"), "band": band,
-                    "stay_time": f"{device.get('day')}일 {device.get('hour')}시간 {device.get('min')}분 {device.get('sec')}초", "state": "home"}
+                    "state": "home"}
         return result_dict
 
-    async def get_mesh_station(self, rssi_limit: int = DEFAULT_RSSI_LIMIT) -> Dict:
+    async def get_mesh_station(self, rssi_limit: int = DEFAULT_RSSI_LIMIT) -> Dict | None:
         """EasyMesh 기기 목록 조회 및 파싱 (예외 격리 및 RSSI 임계값 유기적 조절)."""
         text = await self._async_request("GET", f"{self._url}{MESH_STATION_URN}")
         res = {}
         
         try:
             data = loads(text)
-            stations = data.get("station", [])
-        except Exception as err:
+            stations = data.get("station") if isinstance(data, dict) else None
+        except (ValueError, TypeError) as err:
             _LOGGER.debug(f"Failed to parse EasyMesh topology JSON: {err}")
-            return res
+            return None
+        if not isinstance(stations, list):
+            return None
 
         # The topology response links each station to a Controller/Agent via
         # ``agent_mac``. Build a small, non-sensitive lookup for entity attrs.
@@ -1001,17 +824,6 @@ class IPTimeAPI:
                 if connection in ["Unknown", "WIRED"]:
                     continue
 
-                # 경과 시간(stay_time) 안전 계산
-                try:
-                    timestamp = int(s.get("timestamp", 0) or 0)
-                    connected_ts = int(s.get("connected_ts", 0) or 0)
-                    td_seconds = max(0, timestamp - connected_ts)
-                    td = timedelta(seconds=td_seconds)
-                except (ValueError, TypeError):
-                    td = timedelta(seconds=0)
-
-                stay_time_str = f"{td.days}일 {td.seconds//3600}시간 {(td.seconds//60)%60}분 {td.seconds%60}초"
-
                 # RSSI 안전 파싱
                 rssi_val = s.get("rssi")
                 rssi_int = 0
@@ -1032,8 +844,6 @@ class IPTimeAPI:
                 res[mac] = {
                     "ip": s.get("ip", "N/A"),
                     "band": s.get("mode", "Unknown"),
-                    "stay_time": stay_time_str,
-                    "rssi": rssi_int if rssi_val is not None else None,
                     "state": state,
                     "connected_to": mesh_node.get("name") or raw_agent_mac or None,
                     "connected_to_mac": mesh_node.get("mac") or raw_agent_mac or None,
@@ -1074,69 +884,6 @@ class IPTimeAPI:
             return False
 
 
-
-    async def async_set_web_wg_server_run(self, run: bool) -> bool:
-        """WireGuard 서버 실행 상태를 변경한다. (연결될 파일: switch.py)"""
-        wg_config = self.web_result.get("wg_server", {})
-        if not isinstance(wg_config, dict):
-            wg_config = {}
-
-        # 펌웨어 유효성 검사 통과를 위해, 오직 리얼 필수 4대 스펙 필드(active, address, port, nat)와 commit만 전송
-        params = {
-            "active": bool(run),
-            "address": wg_config.get("ip", "10.0.21.1"),
-            "port": int(wg_config.get("port", 53344)),
-            "nat": bool(wg_config.get("nat", True)),
-            "commit": True
-        }
-
-        try:
-            response = await self._async_service_json("wg/server/set", params)
-            if not response.get("error"):
-                _LOGGER.info(f"WireGuard 서버 실행 상태 변경 완료 (wg/server/set): active={run}")
-                self._last_caching_time = 0.0 # 캐시 강제 만료
-                return True
-            else:
-                _LOGGER.warning(f"WireGuard 서버 실행 상태 변경 중 API 오류: {response.get('error')}")
-        except Exception as err:
-            _LOGGER.warning(f"WireGuard 서버 실행 상태 변경 실패: {err}")
-        return False
-
-    async def async_set_web_portforward_enable(self, enable: bool) -> bool:
-        """포트포워딩 기능의 활성화 상태를 제어한다. (연결될 파일: switch.py)"""
-        # 요약: 포트포워딩의 활성화 여부를 true/false로 제어한다.
-        # 연결 파일: switch.py
-        if not self._beta_ui:
-            return False
-        response = await self._async_service_json("portforward/config", {"enable": bool(enable)})
-        if not response.get("error"):
-            self._last_caching_time = 0.0 # 캐시 강제 만료
-            return True
-        return False
-
-    async def async_set_web_upnp_relay_enable(self, enable: bool) -> bool:
-        """UPnP 포트포워드 릴레이 기능의 활성화 상태를 제어한다. (연결될 파일: switch.py)"""
-        # 요약: UPnP 릴레이 기능을 단일 bool 값으로 제어한다.
-        # 연결 파일: switch.py
-        if not self._beta_ui:
-            return False
-        response = await self._async_service_json("upnp/relay", bool(enable))
-        if not response.get("error"):
-            self._last_caching_time = 0.0 # 캐시 강제 만료
-            return True
-        return False
-
-    async def async_set_web_nat_config(self, enable: bool) -> bool:
-        """인터넷 연결 유지(NAT) 설정을 제어한다. (연결될 파일: switch.py)"""
-        # 요약: 인터넷 연결 유지(NAT) 설정의 활성화 여부를 제어한다.
-        # 연결 파일: switch.py
-        if not self._beta_ui:
-            return False
-        response = await self._async_service_json("nat/config", bool(enable))
-        if not response.get("error"):
-            self._last_caching_time = 0.0 # 캐시 강제 만료
-            return True
-        return False
 
     async def async_get_wireless_channel_list(self, band: str) -> List[str]:
         """특정 무선 대역(band)에서 지원하는 채널 목록을 조회한다. (연결될 파일: select.py)"""

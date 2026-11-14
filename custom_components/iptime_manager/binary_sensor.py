@@ -8,7 +8,7 @@ from homeassistant.components.binary_sensor import (
     BinarySensorEntity,
     BinarySensorDeviceClass,
 )
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from .coordinator import IPTimeChangedEntity
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.config_entries import ConfigEntry
@@ -156,7 +156,7 @@ def _get_mesh_ssids(mesh_data: Dict[str, Any]) -> dict[str, str]:
     return result
 
 
-class IPTimeEasyMeshBinarySensor(CoordinatorEntity, BinarySensorEntity):
+class IPTimeEasyMeshBinarySensor(IPTimeChangedEntity, BinarySensorEntity):
     """Read-only EasyMesh activation status."""
 
     def __init__(self, coordinator, entry) -> None:
@@ -186,7 +186,7 @@ class IPTimeEasyMeshBinarySensor(CoordinatorEntity, BinarySensorEntity):
         return attributes
 
 
-class IPTimeEasyMeshAgentBinarySensor(CoordinatorEntity, BinarySensorEntity):
+class IPTimeEasyMeshAgentBinarySensor(IPTimeChangedEntity, BinarySensorEntity):
     """Read-only status for one EasyMesh agent."""
 
     def __init__(self, coordinator, entry, agent: Dict[str, Any]) -> None:
@@ -249,7 +249,7 @@ class IPTimeEasyMeshAgentBinarySensor(CoordinatorEntity, BinarySensorEntity):
         }
 
 
-class IPTimeInterfaceBinarySensor(CoordinatorEntity, BinarySensorEntity):
+class IPTimeInterfaceBinarySensor(IPTimeChangedEntity, BinarySensorEntity):
     # 요약: ipTIME 공유기 물리 유선 포트(LAN/WAN)의 실시간 연결 상태 및 속도를 제공하는 이진 센서.
     # 연결될 파일: coordinator.py, binary_sensor.py, switch.py
 

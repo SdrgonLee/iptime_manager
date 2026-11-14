@@ -1,6 +1,7 @@
 import logging
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import entity_registry as er
 from .const import DOMAIN, CONF_URL, CONF_ID, CONF_PASSWORD, PLATFORMS
 from .api import IPTimeAPI
 from .coordinator import IPTimeDataUpdateCoordinator
@@ -20,8 +21,45 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     coordinator = IPTimeDataUpdateCoordinator(hass, api, entry)
     
     _LOGGER.info("Attempting initial ipTIME data collection...")
-    await coordinator.async_config_entry_first_refresh()
+    try:
+        await coordinator.tracker.async_refresh()
+        await coordinator.async_config_entry_first_refresh()
+    except Exception:
+        await api.async_close()
+        raise
     _LOGGER.info("Initial ipTIME data collection completed")
+
+    registry = er.async_get(hass)
+    for domain, suffix in (
+        ("sensor", "model"),
+        ("sensor", "primary_dns"),
+        ("sensor", "secondary_dns"),
+        ("sensor", "wan_mac"),
+        ("sensor", "lan_mac"),
+        ("sensor", "geoip_blocked_count"),
+        ("sensor", "wireguard_connected_peer_count"),
+        ("select", "geoip_policy"),
+        ("select", "night_led"),
+        ("switch", "sysmisc_upnp"),
+        ("switch", "sysmisc_keep_connection"),
+        ("switch", "sysmisc_wan_reconnect"),
+        ("switch", "nat_upnp_relay"),
+        ("switch", "security_geoip"),
+        ("switch", "security_accesslist"),
+        ("switch", "security_csrf"),
+        ("switch", "security_arp_virus"),
+        ("switch", "security_syn_flood"),
+        ("switch", "security_smurf"),
+        ("switch", "security_ip_source_routing"),
+        ("switch", "security_ip_spoofing"),
+        ("switch", "security_inbound_ping"),
+        ("switch", "security_outbound_ping"),
+        ("switch", "wg_server_run"),
+        ("switch", "nat_portforward"),
+    ):
+        entity_id = registry.async_get_entity_id(domain, DOMAIN, f"{entry.entry_id}_{suffix}")
+        if entity_id is not None:
+            registry.async_remove(entity_id)
 
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = coordinator

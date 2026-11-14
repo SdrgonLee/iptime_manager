@@ -5,6 +5,14 @@ ipTIME Manager의 공식 버전별 핵심 변경 사항 및 개선 내역입니�
 
 ---
 
+## v1.0.10 — 재실 감지 및 리소스 사용 개선
+
+* 재실 스캔을 공유기 상태 조회와 분리했습니다. 신규 설정 기본값은 3초이며 기존 설정값은 유지합니다.
+* 상태나 속성이 바뀐 엔티티만 HA에 기록합니다. 트래커에서 `stay_time`, `last_seen`, `rssi` 공개 속성을 제거했습니다.
+* EasyMesh Guest SSID 제어, 연결 노드 정보, RSSI 기반 재실 판정과 기존 엔티티 ID를 유지합니다.
+* WireGuard, 포트 포워딩, Night LED, WAN Reconnect, UPnP, Keep Connection, GeoIP·Access List·보안 제어와 DNS·MAC·모델 센서를 정리합니다. 남은 보안 경보는 유지합니다.
+* 무선 조회, 세션 연장 요청, 펌웨어 조회와 중복 갱신을 줄였습니다. 공유기 상태 조회 실패는 엔티티 가용성에 반영하고 로그인 로그에서 응답 본문과 세션 ID를 제거했습니다.
+
 ## Per-band EasyMesh and guest Wi-Fi controls (v1.0.9, 2026-08-19)
 
 * Added switches for individually configured EasyMesh 2.4G/5G/6G main and guest SSIDs from `wifi_band`.

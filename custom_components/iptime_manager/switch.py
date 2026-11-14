@@ -6,7 +6,7 @@ from typing import Any, Dict, List
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.core import HomeAssistant
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from .coordinator import IPTimeChangedEntity
 
 from .const import DOMAIN, CONF_URL
 from .api import format_channel_string
@@ -147,12 +147,6 @@ def _web_wireless_security_label(authenc: Any) -> str:
     return mapping.get(value, str(authenc or "Unknown"))
 
 
-def _get_web_security_block(web_data: Dict[str, Any], key: str) -> Dict[str, Any]:
-    security = web_data.get("security", {}) if isinstance(web_data, dict) else {}
-    block = security.get(key, {}) if isinstance(security, dict) else {}
-    return block if isinstance(block, dict) else {}
-
-
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities) -> None:
     coordinator = hass.data[DOMAIN][entry.entry_id]
     web_data = (coordinator.data or {}).get("web", {})
@@ -180,58 +174,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
                 IPTimeEasyMeshBandWifiSwitch(coordinator, entry, band, network_type)
             )
 
-    if coordinator.api._beta_ui:
-        # 원격 관리 설정(Access List) 지원 모델인 경우에만 생성
-        if web_data.get("acl") is not None:
-            entities.append(IPTimeAccessListSwitch(coordinator, entry))
-        
-        # 보안 제어 설정이 지원되는 모델인 경우에만 생성
-        if web_data.get("security_dos") is not None:
-            security_items = [
-                ("csrf", "CSRF Prevention", "mdi:shield-lock"),
-                ("arp_virus", "ARP Virus Protection", "mdi:shield-bug"),
-                ("syn_flood", "SYN Flood Protection", "mdi:shield-alert"),
-                ("smurf", "Smurf Protection", "mdi:shield-remove"),
-                ("ip_source_routing", "IP Source Routing Block", "mdi:router-network"),
-                ("ip_spoofing", "IP Spoofing Protection", "mdi:incognito"),
-                ("inbound_ping", "Block Inbound Ping", "mdi:network-lock"),
-                ("outbound_ping", "Block Outbound Ping", "mdi:network-lock"),
-            ]
-            for key, name, icon in security_items:
-                entities.append(IPTimeSecuritySwitch(coordinator, entry, key, name, icon))
-
-        # UPnP 설정이 지원되는 모델인 경우에만 생성
-        if web_data.get("upnp_config") is not None:
-            entities.append(IPTimeUPnPSwitch(coordinator, entry))
-            
-        # 자동 재부팅 설정이 지원되는 모델인 경우에만 생성
-        if web_data.get("reboot_timer") is not None:
-            entities.append(IPTimeAutoRebootSwitch(coordinator, entry))
-            
-        # 인터넷 연결 유지 설정이 지원되는 모델인 경우에만 생성
-        if web_data.get("nat_config") is not None:
-            entities.append(IPTimeKeepConnectSwitch(coordinator, entry))
-            
-        # WAN포트 끊김 시 재연결 설정이 지원되는 모델인 경우에만 생성
-        if web_data.get("wan_heartbeat") is not None:
-            entities.append(IPTimeWanReconnectSwitch(coordinator, entry))
-
-        # 와이어가드 서버 설정이 수집되는 하드웨어 모델인 경우에만 스위치 생성 (예외 처리)
-        if web_data.get("wg_server") is not None:
-            entities.append(IPTimeWireGuardServerSwitch(coordinator, entry))
-
-        # 포트포워드 설정이 지원되는 모델인 경우에만 생성
-        if web_data.get("portforward_config") is not None:
-            entities.append(IPTimePortForwardSwitch(coordinator, entry))
-
-        # UPnP 릴레이 설정이 지원되는 모델인 경우에만 생성
-        if web_data.get("upnp_relay") is not None:
-            entities.append(IPTimeUPnPRelaySwitch(coordinator, entry))
+    if coordinator.api._beta_ui and web_data.get("reboot_timer") is not None:
+        entities.append(IPTimeAutoRebootSwitch(coordinator, entry))
 
     async_add_entities(entities)
 
 
-class IPTimeWifiSwitch(CoordinatorEntity, SwitchEntity):
+class IPTimeWifiSwitch(IPTimeChangedEntity, SwitchEntity):
     """ipTIME wireless BSS (SSID) on/off switch."""
 
     def __init__(self, coordinator, entry, bss_id: str) -> None:
@@ -284,21 +233,19 @@ class IPTimeWifiSwitch(CoordinatorEntity, SwitchEntity):
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn on the wireless BSS."""
-        await self.coordinator.api.async_set_web_wireless_bss_enable(
+        if await self.coordinator.api.async_set_web_wireless_bss_enable(
             self._bss_id,
             True,
-        )
-        await self.coordinator.async_request_refresh()
-        await self.coordinator.async_request_refresh()
+        ):
+            await self.coordinator.async_request_refresh()
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn off the wireless BSS."""
-        await self.coordinator.api.async_set_web_wireless_bss_enable(
+        if await self.coordinator.api.async_set_web_wireless_bss_enable(
             self._bss_id,
             False,
-        )
-        await self.coordinator.async_request_refresh()
-        await self.coordinator.async_request_refresh()
+        ):
+            await self.coordinator.async_request_refresh()
 
     @property
     def device_info(self) -> dict[str, Any]:
@@ -312,7 +259,7 @@ class IPTimeWifiSwitch(CoordinatorEntity, SwitchEntity):
         }
 
 
-class IPTimeEasyMeshWifiSwitch(CoordinatorEntity, SwitchEntity):
+class IPTimeEasyMeshWifiSwitch(IPTimeChangedEntity, SwitchEntity):
     """Controller-managed EasyMesh SSID on/off switch."""
 
     def __init__(self, coordinator, entry, network_type: str) -> None:
@@ -371,7 +318,7 @@ class IPTimeEasyMeshWifiSwitch(CoordinatorEntity, SwitchEntity):
         }
 
 
-class IPTimeEasyMeshBandWifiSwitch(CoordinatorEntity, SwitchEntity):
+class IPTimeEasyMeshBandWifiSwitch(IPTimeChangedEntity, SwitchEntity):
     """Individually configured EasyMesh band SSID on/off switch."""
 
     def __init__(self, coordinator, entry, band: str, network_type: str) -> None:
@@ -448,187 +395,8 @@ class IPTimeEasyMeshBandWifiSwitch(CoordinatorEntity, SwitchEntity):
         }
 
 
-class IPTimeGeoIPSwitch(CoordinatorEntity, SwitchEntity):
-    """ipTIME GeoIP protection switch."""
-
-    def __init__(self, coordinator, entry) -> None:
-        super().__init__(coordinator)
-        self._entry = entry
-        self._attr_unique_id = f"{entry.entry_id}_security_geoip"
-        self._attr_name = f"GeoIP ({entry.data.get(CONF_URL)})"
-        self._attr_icon = "mdi:web"
-
-    @property
-    def is_on(self) -> bool:
-        web_data = self.coordinator.data.get("web", {}) if self.coordinator.data else {}
-        geoip = _get_web_security_block(web_data, "geoip")
-        return bool(geoip.get("enable"))
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        web_data = self.coordinator.data.get("web", {}) if self.coordinator.data else {}
-        geoip = _get_web_security_block(web_data, "geoip")
-        return {
-            "enable": geoip.get("enable"),
-            "policy": geoip.get("policy"),
-            "drop_list": geoip.get("drop_list"),
-            "accept_list": geoip.get("accept_list"),
-        }
-
-    async def async_turn_on(self, **kwargs: Any) -> None:
-        await self.coordinator.api.async_set_web_geoip_enable(True)
-        await self.coordinator.async_request_refresh()
-
-    async def async_turn_off(self, **kwargs: Any) -> None:
-        await self.coordinator.api.async_set_web_geoip_enable(False)
-        await self.coordinator.async_request_refresh()
-
-    @property
-    def device_info(self) -> dict[str, Any]:
-        web_data = self.coordinator.data.get("web", {}) if self.coordinator.data else {}
-        model = web_data.get("model", "ipTIME Router")
-        return {
-            "identifiers": {(DOMAIN, self._entry.entry_id)},
-            "name": model,
-            "manufacturer": "EFM Networks",
-            "model": model,
-        }
-
-
-class IPTimeAccessListSwitch(CoordinatorEntity, SwitchEntity):
-    """ipTIME access list / WAN ACL switch."""
-
-    def __init__(self, coordinator, entry) -> None:
-        super().__init__(coordinator)
-        self._entry = entry
-        self._attr_unique_id = f"{entry.entry_id}_security_accesslist"
-        self._attr_name = f"Access List ({entry.data.get(CONF_URL)})"
-        self._attr_icon = "mdi:shield-key"
-
-    @property
-    def is_on(self) -> bool:
-        web_data = self.coordinator.data.get("web", {}) if self.coordinator.data else {}
-        acl = web_data.get("acl", [])
-        for entry in acl:
-            if entry.get("ntag") == "wan1":
-                return bool(entry.get("open", {}).get("flag"))
-        return False
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        web_data = self.coordinator.data.get("web", {}) if self.coordinator.data else {}
-        acl = web_data.get("acl", [])
-        wan1 = {}
-        for entry in acl:
-            if entry.get("ntag") == "wan1":
-                wan1 = entry
-                break
-        return {
-            "port": wan1.get("open", {}).get("port"),
-            "filter_enabled": wan1.get("filter", {}).get("flag"),
-        }
-
-    async def async_turn_on(self, **kwargs: Any) -> None:
-        await self.coordinator.api.async_set_web_accesslist_enable(True)
-        await self.coordinator.async_request_refresh()
-
-    async def async_turn_off(self, **kwargs: Any) -> None:
-        await self.coordinator.api.async_set_web_accesslist_enable(False)
-        await self.coordinator.async_request_refresh()
-
-    @property
-    def device_info(self) -> dict[str, Any]:
-        web_data = self.coordinator.data.get("web", {}) if self.coordinator.data else {}
-        model = web_data.get("model", "ipTIME Router")
-        return {
-            "identifiers": {(DOMAIN, self._entry.entry_id)},
-            "name": model,
-            "manufacturer": "EFM Networks",
-            "model": model,
-        }
-
-
-class IPTimeSecuritySwitch(CoordinatorEntity, SwitchEntity):
-    """ipTIME DoS/Security setting switch."""
-
-    def __init__(self, coordinator, entry, key: str, name: str, icon: str) -> None:
-        super().__init__(coordinator)
-        self._entry = entry
-        self._key = key
-        self._attr_unique_id = f"{entry.entry_id}_security_{key}"
-        self._attr_name = f"{name} ({entry.data.get(CONF_URL)})"
-        self._attr_icon = icon
-
-    @property
-    def is_on(self) -> bool:
-        web_data = self.coordinator.data.get("web", {}) if self.coordinator.data else {}
-        security = web_data.get("security_dos", {})
-        
-        if self._key == "csrf":
-            return bool(security.get("csrf", {}).get("run"))
-        if self._key == "arp_virus":
-            return bool(security.get("arp_virus", {}).get("run"))
-            
-        return bool(security.get(self._key))
-
-    async def async_turn_on(self, **kwargs: Any) -> None:
-        await self.coordinator.api.async_set_security_switch(self._key, True)
-        await self.coordinator.async_request_refresh()
-
-    async def async_turn_off(self, **kwargs: Any) -> None:
-        await self.coordinator.api.async_set_security_switch(self._key, False)
-        await self.coordinator.async_request_refresh()
-
-    @property
-    def device_info(self) -> dict[str, Any]:
-        web_data = self.coordinator.data.get("web", {}) if self.coordinator.data else {}
-        model = web_data.get("model", "ipTIME Router")
-        return {
-            "identifiers": {(DOMAIN, self._entry.entry_id)},
-            "name": model,
-            "manufacturer": "EFM Networks",
-            "model": model,
-        }
-
-
-# 요약: UPnP 설정을 스위치로 제어한다. (연결 파일: api.py)
-class IPTimeUPnPSwitch(CoordinatorEntity, SwitchEntity):
-    """ipTIME UPnP setting switch."""
-
-    def __init__(self, coordinator, entry) -> None:
-        super().__init__(coordinator)
-        self._entry = entry
-        self._attr_unique_id = f"{entry.entry_id}_sysmisc_upnp"
-        self._attr_name = f"UPnP ({entry.data.get(CONF_URL)})"
-        self._attr_icon = "mdi:router-wireless"
-
-    @property
-    def is_on(self) -> bool:
-        web_data = self.coordinator.data.get("web", {}) if self.coordinator.data else {}
-        return bool(web_data.get("upnp_config", False))
-
-    async def async_turn_on(self, **kwargs: Any) -> None:
-        await self.coordinator.api.async_set_web_upnp_enable(True)
-        await self.coordinator.async_request_refresh()
-
-    async def async_turn_off(self, **kwargs: Any) -> None:
-        await self.coordinator.api.async_set_web_upnp_enable(False)
-        await self.coordinator.async_request_refresh()
-
-    @property
-    def device_info(self) -> dict[str, Any]:
-        web_data = self.coordinator.data.get("web", {}) if self.coordinator.data else {}
-        model = web_data.get("model", "ipTIME Router")
-        return {
-            "identifiers": {(DOMAIN, self._entry.entry_id)},
-            "name": model,
-            "manufacturer": "EFM Networks",
-            "model": model,
-        }
-
-
 # 요약: 공유기 자동 재시작 설정을 스위치로 제어한다. (연결 파일: api.py)
-class IPTimeAutoRebootSwitch(CoordinatorEntity, SwitchEntity):
+class IPTimeAutoRebootSwitch(IPTimeChangedEntity, SwitchEntity):
     """ipTIME Auto Reboot setting switch."""
 
     def __init__(self, coordinator, entry) -> None:
@@ -670,217 +438,6 @@ class IPTimeAutoRebootSwitch(CoordinatorEntity, SwitchEntity):
         min_time = timer.get("min", 0)
         days = timer.get("days", ["Fri"])
         await self.coordinator.api.async_set_web_reboot_timer(False, hour, min_time, days)
-        await self.coordinator.async_request_refresh()
-
-    @property
-    def device_info(self) -> dict[str, Any]:
-        web_data = self.coordinator.data.get("web", {}) if self.coordinator.data else {}
-        model = web_data.get("model", "ipTIME Router")
-        return {
-            "identifiers": {(DOMAIN, self._entry.entry_id)},
-            "name": model,
-            "manufacturer": "EFM Networks",
-            "model": model,
-        }
-
-
-# 요약: 인터넷 연결 유지 설정을 스위치로 제어한다. (연결 파일: api.py)
-class IPTimeKeepConnectSwitch(CoordinatorEntity, SwitchEntity):
-    """ipTIME Keep Internet Connection switch."""
-
-    def __init__(self, coordinator, entry) -> None:
-        super().__init__(coordinator)
-        self._entry = entry
-        self._attr_unique_id = f"{entry.entry_id}_sysmisc_keep_connection"
-        self._attr_name = f"Keep Connection ({entry.data.get(CONF_URL)})"
-        self._attr_icon = "mdi:link-variant"
-
-    @property
-    def is_on(self) -> bool:
-        web_data = self.coordinator.data.get("web", {}) if self.coordinator.data else {}
-        return bool(web_data.get("nat_config", False))
-
-    async def async_turn_on(self, **kwargs: Any) -> None:
-        await self.coordinator.api.async_set_web_nat_config(True)
-        await self.coordinator.async_request_refresh()
-
-    async def async_turn_off(self, **kwargs: Any) -> None:
-        await self.coordinator.api.async_set_web_nat_config(False)
-        await self.coordinator.async_request_refresh()
-
-    @property
-    def device_info(self) -> dict[str, Any]:
-        web_data = self.coordinator.data.get("web", {}) if self.coordinator.data else {}
-        model = web_data.get("model", "ipTIME Router")
-        return {
-            "identifiers": {(DOMAIN, self._entry.entry_id)},
-            "name": model,
-            "manufacturer": "EFM Networks",
-            "model": model,
-        }
-
-
-# 요약: WAN포트 끊김 시 재연결 설정을 스위치로 제어한다. (연결 파일: api.py)
-class IPTimeWanReconnectSwitch(CoordinatorEntity, SwitchEntity):
-    """ipTIME Reconnect on WAN disconnect switch."""
-
-    def __init__(self, coordinator, entry) -> None:
-        super().__init__(coordinator)
-        self._entry = entry
-        self._attr_unique_id = f"{entry.entry_id}_sysmisc_wan_reconnect"
-        self._attr_name = f"WAN Reconnect ({entry.data.get(CONF_URL)})"
-        self._attr_icon = "mdi:connection"
-
-    @property
-    def is_on(self) -> bool:
-        web_data = self.coordinator.data.get("web", {}) if self.coordinator.data else {}
-        heartbeat = web_data.get("wan_heartbeat", {})
-        return bool(heartbeat.get("run", False))
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        web_data = self.coordinator.data.get("web", {}) if self.coordinator.data else {}
-        heartbeat = web_data.get("wan_heartbeat", {})
-        return {
-            "detect_interval_seconds": heartbeat.get("interval", 3),
-        }
-
-    async def async_turn_on(self, **kwargs: Any) -> None:
-        web_data = self.coordinator.data.get("web", {}) if self.coordinator.data else {}
-        heartbeat = web_data.get("wan_heartbeat", {})
-        interval = heartbeat.get("interval", 3)
-        await self.coordinator.api.async_set_web_wan_heartbeat(True, interval)
-        await self.coordinator.async_request_refresh()
-
-    async def async_turn_off(self, **kwargs: Any) -> None:
-        web_data = self.coordinator.data.get("web", {}) if self.coordinator.data else {}
-        heartbeat = web_data.get("wan_heartbeat", {})
-        interval = heartbeat.get("interval", 3)
-        await self.coordinator.api.async_set_web_wan_heartbeat(False, interval)
-        await self.coordinator.async_request_refresh()
-
-    @property
-    def device_info(self) -> dict[str, Any]:
-        web_data = self.coordinator.data.get("web", {}) if self.coordinator.data else {}
-        model = web_data.get("model", "ipTIME Router")
-        return {
-            "identifiers": {(DOMAIN, self._entry.entry_id)},
-            "name": model,
-            "manufacturer": "EFM Networks",
-            "model": model,
-        }
-
-
-# 요약: WireGuard 서버의 실행 스위치를 제공한다. (연결 파일: api.py)
-class IPTimeWireGuardServerSwitch(CoordinatorEntity, SwitchEntity):
-    """ipTIME WireGuard Server Toggle Switch."""
-
-    def __init__(self, coordinator, entry) -> None:
-        super().__init__(coordinator)
-        self._entry = entry
-        self._attr_unique_id = f"{entry.entry_id}_wg_server_run"
-        self._attr_name = f"WireGuard Server ({entry.data.get(CONF_URL)})"
-        self._attr_icon = "mdi:shield-key"
-
-    @property
-    def is_on(self) -> bool:
-        web_data = self.coordinator.data.get("web", {}) if self.coordinator.data else {}
-        wg_server = web_data.get("wg_server", {})
-        return wg_server.get("run") is True or wg_server.get("enable") is True
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        web_data = self.coordinator.data.get("web", {}) if self.coordinator.data else {}
-        wg_server = web_data.get("wg_server", {})
-        return {
-            "ip": wg_server.get("ip", "10.0.21.1"),
-            "subnet": wg_server.get("subnet", "24"),
-            "port": wg_server.get("port", 53344),
-            "nat": wg_server.get("nat", True),
-            "pubkey": wg_server.get("pubkey"),
-        }
-
-    async def async_turn_on(self, **kwargs: Any) -> None:
-        await self.coordinator.api.async_set_web_wg_server_run(True)
-        await self.coordinator.async_request_refresh()
-
-    async def async_turn_off(self, **kwargs: Any) -> None:
-        await self.coordinator.api.async_set_web_wg_server_run(False)
-        await self.coordinator.async_request_refresh()
-
-    @property
-    def device_info(self) -> dict[str, Any]:
-        web_data = self.coordinator.data.get("web", {}) if self.coordinator.data else {}
-        model = web_data.get("model", "ipTIME Router")
-        return {
-            "identifiers": {(DOMAIN, self._entry.entry_id)},
-            "name": model,
-            "manufacturer": "EFM Networks",
-            "model": model,
-        }
-
-
-# 요약: 포트포워딩 기능의 활성화 여부를 스위치로 제어한다. (연결 파일: api.py)
-class IPTimePortForwardSwitch(CoordinatorEntity, SwitchEntity):
-    """ipTIME Port Forwarding toggle switch."""
-
-    def __init__(self, coordinator, entry) -> None:
-        super().__init__(coordinator)
-        self._entry = entry
-        self._attr_unique_id = f"{entry.entry_id}_nat_portforward"
-        self._attr_name = f"Port Forwarding ({entry.data.get(CONF_URL)})"
-        self._attr_icon = "mdi:router-wireless-settings"
-
-    @property
-    def is_on(self) -> bool:
-        web_data = self.coordinator.data.get("web", {}) if self.coordinator.data else {}
-        pf = web_data.get("portforward_config", {})
-        if not isinstance(pf, dict):
-            return False
-        return bool(pf.get("enable", False))
-
-    async def async_turn_on(self, **kwargs: Any) -> None:
-        await self.coordinator.api.async_set_web_portforward_enable(True)
-        await self.coordinator.async_request_refresh()
-
-    async def async_turn_off(self, **kwargs: Any) -> None:
-        await self.coordinator.api.async_set_web_portforward_enable(False)
-        await self.coordinator.async_request_refresh()
-
-    @property
-    def device_info(self) -> dict[str, Any]:
-        web_data = self.coordinator.data.get("web", {}) if self.coordinator.data else {}
-        model = web_data.get("model", "ipTIME Router")
-        return {
-            "identifiers": {(DOMAIN, self._entry.entry_id)},
-            "name": model,
-            "manufacturer": "EFM Networks",
-            "model": model,
-        }
-
-
-# 요약: UPnP 포트포워드 릴레이 활성화 여부를 스위치로 제어한다. (연결 파일: api.py)
-class IPTimeUPnPRelaySwitch(CoordinatorEntity, SwitchEntity):
-    """ipTIME UPnP Port-forwarding Relay toggle switch."""
-
-    def __init__(self, coordinator, entry) -> None:
-        super().__init__(coordinator)
-        self._entry = entry
-        self._attr_unique_id = f"{entry.entry_id}_nat_upnp_relay"
-        self._attr_name = f"UPnP Relay ({entry.data.get(CONF_URL)})"
-        self._attr_icon = "mdi:folder-swap"
-
-    @property
-    def is_on(self) -> bool:
-        web_data = self.coordinator.data.get("web", {}) if self.coordinator.data else {}
-        return bool(web_data.get("upnp_relay", False))
-
-    async def async_turn_on(self, **kwargs: Any) -> None:
-        await self.coordinator.api.async_set_web_upnp_relay_enable(True)
-        await self.coordinator.async_request_refresh()
-
-    async def async_turn_off(self, **kwargs: Any) -> None:
-        await self.coordinator.api.async_set_web_upnp_relay_enable(False)
         await self.coordinator.async_request_refresh()
 
     @property
